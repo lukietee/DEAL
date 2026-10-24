@@ -227,6 +227,8 @@ struct LiveSessionView: View {
                 }
             }
             .font(.subheadline.weight(.semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             .padding(.horizontal)
             .padding(.bottom, 8)
         }

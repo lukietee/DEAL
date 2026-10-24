@@ -124,17 +124,15 @@ final class DEALFlowUITests: XCTestCase {
         sleep(1)
         shot("S4-terminal")
 
+        // The sheet is pre-filled with the demo add-on ("protection package", $1,200).
         app.buttons["Add line item"].tapWhenReady()
-        let label = app.textFields["Label"]
-        label.tapWhenReady()
-        label.typeText("protection package")
-        let amount = app.textFields["Amount"]
-        amount.tap()
-        amount.typeText("1200")
+        XCTAssertEqual(app.textFields["Label"].waitForExistence(timeout: 5) ? app.textFields["Label"].value as? String : nil, "protection package")
         shot("S4-add-line-item")
         app.buttons["Add"].tapWhenReady()
 
         XCTAssertTrue(app.staticTexts["Waiting for buyer approval"].waitForExistence(timeout: 15), "terminal never showed waiting state")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '$35,800.00'")).firstMatch.exists,
+                      "terminal should show the $35,800.00 requested total")
         shot("S4-waiting-for-buyer")
         let blocked = try XCTUnwrap((try state(sid)["payment_requests"] as? [[String: Any]])?.first { $0["status"] as? String == "blocked" })
         _ = try api("POST", "/payment-requests/\(try XCTUnwrap(blocked["id"] as? String))/decision", ["decision": "reject"])
