@@ -61,6 +61,29 @@ targets:
         ENABLE_PREVIEWS: YES
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
 
+  # UI smoke tests: drive one phone through the UI, play the other phone over the backend API.
+  # Needs the backend running in mock mode. See DEALUITests/DEALFlowUITests.swift.
+  DEALUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: DEALUITests
+    dependencies:
+      - target: DEAL
+    info:
+      path: DEALUITests/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lucas.deal.uitests
+        TEST_TARGET_NAME: DEAL
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: NO
+
 schemes:
   DEAL:
     build:
@@ -68,3 +91,7 @@ schemes:
         DEAL: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - DEALUITests

@@ -4,3 +4,4 @@ DEAL/Info.plist
 xcuserdata/
 DerivedData/
 .build/
+DEALUITests/Info.plist
