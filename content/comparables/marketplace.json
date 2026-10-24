@@ -1,0 +1,12 @@
+{
+  "category": "marketplace",
+  "illustrative": true,
+  "reference_item": "Used road bike, 56cm aluminum frame",
+  "disclaimer": "Illustrative comparable prices for demo purposes only. Not real listings.",
+  "listings": [
+    { "id": "mkt_comp_01", "title": "Aluminum road bike, 56cm, Shimano 105", "price": 65000, "source": "Local marketplace listing (illustrative)", "condition": "used, good", "note": "Recently tuned." },
+    { "id": "mkt_comp_02", "title": "Aluminum road bike, 56cm, Shimano Tiagra", "price": 48000, "source": "Local marketplace listing (illustrative)", "condition": "used, fair", "note": "Lower-tier groupset; worn tires." },
+    { "id": "mkt_comp_03", "title": "Aluminum road bike, 54cm, Shimano 105", "price": 59000, "source": "Classifieds (illustrative)", "condition": "used, very good", "note": "Smaller frame, otherwise similar." },
+    { "id": "mkt_comp_04", "title": "Aluminum road bike, 56cm, Shimano 105, refurbished", "price": 72500, "source": "Bike shop used section (illustrative)", "condition": "refurbished", "note": "Shop warranty explains the premium." }
+  ]
+}

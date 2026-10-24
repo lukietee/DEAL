@@ -1,0 +1,90 @@
+{
+  "illustrative": true,
+  "status_legend": {
+    "green": "On track: standing offer at or below target, or a strong buyer move",
+    "yellow": "Caution: tactic in play, or standing offer between target and max budget",
+    "red": "Warning: standing offer above max budget, pressure tactic, or blocked charge"
+  },
+  "tactics": [
+    {
+      "id": "monthly_payment_framing",
+      "name": "Monthly payment framing",
+      "detection_hints": ["monthly payment", "per month", "a month", "/mo", "what payment works", "get you in at"],
+      "cue_template": "Redirect to total price",
+      "cue_detail_template": "${monthly}/mo × {months} = ${total}",
+      "status": "yellow"
+    },
+    {
+      "id": "false_urgency",
+      "name": "False urgency / pressure",
+      "detection_hints": ["only good today", "today only", "another buyer", "someone else is looking", "won't last", "price goes up tomorrow"],
+      "cue_template": "Pressure tactic. You can walk.",
+      "cue_detail_template": null,
+      "status": "red"
+    },
+    {
+      "id": "trade_in_bundling",
+      "name": "Trade-in bundling",
+      "detection_hints": ["trading anything in", "trade-in", "work your trade into", "roll it into the number"],
+      "cue_template": "Settle price first, trade-in separately",
+      "cue_detail_template": null,
+      "status": "yellow"
+    },
+    {
+      "id": "long_pause",
+      "name": "Long pause after buyer's offer",
+      "detection_hints": ["silence > 4s after buyer offer", "hmm", "...", "let me think"],
+      "cue_template": "Stay quiet. Let them talk.",
+      "cue_detail_template": null,
+      "status": "yellow"
+    },
+    {
+      "id": "near_comparable",
+      "name": "Offer near a known comparable",
+      "detection_hints": ["seller offer within ~$500 (car) or ~10% of a loaded comparable listing"],
+      "cue_template": "Mention the ${difference} comparable",
+      "cue_detail_template": "Comparable listed at ${comparable_price}",
+      "status": "yellow"
+    },
+    {
+      "id": "fees_not_disclosed",
+      "name": "Fees not yet discussed",
+      "detection_hints": ["price stated with no fees mentioned", "listed at", "sticker price", "before tax and fees"],
+      "cue_template": "Ask for the all-in total",
+      "cue_detail_template": null,
+      "status": "yellow"
+    },
+    {
+      "id": "surprise_fee",
+      "name": "Surprise fee",
+      "detection_hints": ["card fee", "processing fee", "convenience fee", "dealer prep", "percent if you pay by card"],
+      "cue_template": "Ask for the all-in total",
+      "cue_detail_template": "{label} = ${amount}",
+      "status": "yellow"
+    },
+    {
+      "id": "manager_check",
+      "name": "Manager check (good cop / bad cop)",
+      "detection_hints": ["talk to my manager", "check with my boss", "see what I can do", "my manager says"],
+      "cue_template": "Expected move. Stay patient.",
+      "cue_detail_template": null,
+      "status": "yellow"
+    },
+    {
+      "id": "add_on_upsell",
+      "name": "Add-on upsell",
+      "detection_hints": ["protection package", "extended warranty", "paint protection", "VIN etching", "gap insurance", "service plan"],
+      "cue_template": "Add-on not agreed. Decline.",
+      "cue_detail_template": "{label} +${amount}",
+      "status": "red"
+    },
+    {
+      "id": "anchoring_high",
+      "name": "High anchor / sunk cost",
+      "detection_hints": ["I paid more than that", "that's below cost", "I'd lose money", "that's insulting"],
+      "cue_template": "Normal pushback. Hold firm.",
+      "cue_detail_template": null,
+      "status": "yellow"
+    }
+  ]
+}

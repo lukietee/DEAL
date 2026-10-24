@@ -1,0 +1,11 @@
+{
+  "category": "other",
+  "illustrative": true,
+  "reference_item": "Solid wood mid-century dresser",
+  "disclaimer": "Illustrative comparable prices for demo purposes only. Not real listings.",
+  "listings": [
+    { "id": "other_comp_01", "title": "Mid-century walnut dresser, 6 drawers", "price": 45000, "source": "Local marketplace listing (illustrative)", "condition": "used, refinished top", "note": "Buyer pickup only." },
+    { "id": "other_comp_02", "title": "Mid-century teak dresser, 6 drawers", "price": 52500, "source": "Vintage furniture shop (illustrative)", "condition": "restored", "note": "Shop restoration explains the premium." },
+    { "id": "other_comp_03", "title": "Mid-century style dresser, veneer", "price": 28000, "source": "Classifieds (illustrative)", "condition": "used, some chips", "note": "Veneer, not solid wood." }
+  ]
+}

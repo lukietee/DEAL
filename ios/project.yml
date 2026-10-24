@@ -1,0 +1,70 @@
+# XcodeGen spec for DEAL. Generate the project with:  cd ios && xcodegen
+# Never hand-edit DEAL.xcodeproj; edit this file and regenerate.
+name: DEAL
+
+options:
+  bundleIdPrefix: com.lucas
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: 2.55.4   # verified to compile against 2.55.4 (Realtime V2 filter + subscribeWithError APIs)
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"            # app sources also typecheck clean in Swift 6 mode; 5 keeps SPM deps quiet
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  DEAL:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: DEAL
+    dependencies:
+      - package: Supabase
+        product: Supabase
+    info:
+      path: DEAL/Info.plist
+      properties:
+        CFBundleDisplayName: DEAL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIRequiresFullScreen: true
+        NSMicrophoneUsageDescription: "DEAL listens to your negotiation to transcribe offers and coach you in real time."
+        NSSpeechRecognitionUsageDescription: "DEAL transcribes the conversation on-device to track offers, fees and promises."
+        NSCameraUsageDescription: "DEAL uses the camera to scan the buyer's join QR code."
+        NSLocalNetworkUsageDescription: "DEAL connects to the DEAL backend running on your local network during the demo."
+        NSAppTransportSecurity:
+          # Plain http to localhost (Simulator), *.local hosts and LAN IPs (http://192.168.x.x:3000).
+          # ngrok URLs are https and need no exception.
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lucas.deal
+        PRODUCT_NAME: DEAL
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""        # set your team in Xcode (Signing & Capabilities) or here
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_PREVIEWS: YES
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+
+schemes:
+  DEAL:
+    build:
+      targets:
+        DEAL: all
+    run:
+      config: Debug

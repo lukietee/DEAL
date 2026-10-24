@@ -1,0 +1,154 @@
+// Shared data model. Mirrors Section 6 / 12.5 of DEAL_Visa_CalHacks_Concept.md.
+// ALL money values are integer cents (3460000 = $34,600.00).
+
+export type Speaker = "buyer" | "seller";
+export type StatusColor = "green" | "yellow" | "red";
+export type SessionStatus = "live" | "agreement_draft" | "locked" | "paid";
+export type PaymentRequestStatus = "pending" | "blocked" | "approved" | "rejected" | "paid";
+
+export interface Term {
+  id: string; // "term_1", "term_2", ... (stable within a session)
+  type: string; // "price" | "fee" | "item" | "addon" | "trade_in" | ...
+  label: string;
+  amount: number | null; // cents
+  source_event_id: string | null;
+  uncertain: boolean; // shown with "?" in B3
+  corrected: boolean; // true once the buyer fixed it via PATCH /terms
+  original_label?: string; // label as first extracted, kept when a correction renames it
+  removed: boolean;
+}
+
+export interface Session {
+  id: string;
+  category: string;
+  item: string;
+  asking_price: number;
+  target_price: number;
+  max_budget: number;
+  style: string;
+  status: SessionStatus;
+  join_code: string;
+  current_offer: number | null;
+  current_offer_by: Speaker | null;
+  terms: Term[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NewTerm {
+  type: string;
+  label: string;
+  amount: number | null;
+  uncertain?: boolean;
+}
+
+export interface CueExtraction {
+  current_offer: number | null;
+  offer_by: Speaker | null;
+  new_terms: NewTerm[];
+  tactic_detected: string | null;
+  cue: string;
+  cue_detail?: string | null; // e.g. "$489/mo × 72 = $35,208"
+  status: StatusColor;
+}
+
+export interface DealEvent {
+  id: string;
+  session_id: string;
+  seq: number; // 1-based order within the session
+  speaker: Speaker;
+  text: string;
+  timestamp: string; // ISO 8601
+  extracted_offer: number | null;
+  offer_by: Speaker | null;
+  new_terms: NewTerm[];
+  tactic: string | null;
+  cue: string | null;
+  cue_detail: string | null;
+  status_color: StatusColor;
+  script_line_id: string | null; // e.g. "evt_01" when inserted by /script/play
+}
+
+export interface Fee {
+  label: string;
+  amount: number;
+  note?: string;
+}
+
+export interface Agreement {
+  id: string;
+  session_id: string;
+  price: number;
+  items: string[];
+  fees: Fee[];
+  total: number;
+  source_event_ids: string[];
+  open_questions: string[];
+  status: "draft" | "locked";
+  buyer_confirmed_at: string | null;
+  seller_confirmed_at: string | null;
+  fingerprint: string | null;
+  version: number; // bumps on every amendment
+  amendments: Amendment[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Amendment {
+  at: string;
+  payment_request_id: string;
+  added_fees: Fee[];
+  previous_total: number;
+  new_total: number;
+  previous_fingerprint: string | null;
+}
+
+export interface LineItem {
+  label: string;
+  amount: number;
+}
+
+export interface MismatchDetails {
+  ok: boolean;
+  reasons: string[]; // "agreement_not_locked" | "fingerprint_mismatch" | "amount_mismatch" | "unmatched_line_items" | "line_item_amount_mismatch"
+  fingerprint_valid: boolean;
+  agreed_total: number;
+  requested_total: number;
+  difference: number; // requested - agreed (cents)
+  unmatched_line_items: LineItem[]; // labels not in agreement items/fees (e.g. "protection package")
+  mismatched_amount_line_items: LineItem[]; // known label, wrong amount
+  source_event_id: string | null;
+  source_event_text: string | null;
+  source_event_timestamp: string | null;
+}
+
+export interface PaymentRequest {
+  id: string;
+  session_id: string;
+  agreement_id: string;
+  amount: number;
+  line_items: LineItem[];
+  status: PaymentRequestStatus;
+  mismatch_explanation: string | null;
+  mismatch: MismatchDetails | null;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Receipt {
+  id: string;
+  session_id: string;
+  payment_request_id: string;
+  stripe_payment_id: string;
+  amount: number;
+  currency: string;
+  status: string; // "succeeded" (Stripe PaymentIntent status)
+  agreement_fingerprint: string;
+  merchant: string;
+  asking_price: number;
+  blocked_total: number; // sum of extra cents in rejected requests
+  summary: string; // "Asked $38,000, paid $34,600, blocked $1,200"
+  mock: boolean;
+  created_at: string;
+}

@@ -1,0 +1,12 @@
+{
+  "category": "car",
+  "illustrative": true,
+  "reference_item": "2023 Honda Accord EX",
+  "disclaimer": "Illustrative comparable prices for demo purposes only. Not real listings.",
+  "listings": [
+    { "id": "car_comp_01", "title": "2023 Honda Accord EX, 27k mi", "price": 3460000, "source": "Dealer listing across town (illustrative)", "condition": "used, clean history", "note": "$340 below the dealer's $34,940 offer. Use for the 'Mention the $340 comparable' cue." },
+    { "id": "car_comp_02", "title": "2023 Honda Accord EX, 31k mi", "price": 3525000, "source": "Online marketplace (illustrative)", "condition": "used, one owner", "note": "Slightly higher miles, similar trim." },
+    { "id": "car_comp_03", "title": "2023 Honda Accord EX, certified pre-owned, 22k mi", "price": 3649500, "source": "CPO dealer listing (illustrative)", "condition": "certified pre-owned", "note": "CPO warranty explains the premium." },
+    { "id": "car_comp_04", "title": "2023 Honda Accord EX, 38k mi", "price": 3399500, "source": "Private party listing (illustrative)", "condition": "used, minor wear", "note": "Higher miles; sets a low anchor." }
+  ]
+}

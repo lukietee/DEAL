@@ -1,0 +1,6 @@
+DEAL.xcodeproj/
+DEAL/Info.plist
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+.build/

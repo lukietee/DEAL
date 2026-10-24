@@ -1,0 +1,406 @@
+{
+  "id": "car_accord",
+  "category": "car",
+  "item": "2023 Honda Accord EX",
+  "asking_price": 3800000,
+  "target_price": 3450000,
+  "max_budget": 3600000,
+  "style": "firm",
+  "illustrative": true,
+  "disclaimer": "Role-play conversation. All pricing is illustrative and not a real listing or quote.",
+  "lines": [
+    {
+      "id": "evt_01",
+      "speaker": "seller",
+      "text": "Welcome in! This is the 2023 Accord EX, one owner, about 28,000 miles. We've got it listed at thirty-eight thousand.",
+      "delay_ms": 1500,
+      "expected": {
+        "current_offer": 3800000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3800000 }],
+        "tactic_detected": "fees_not_disclosed",
+        "cue": "Ask for the all-in total",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_02",
+      "speaker": "buyer",
+      "text": "Thanks, it looks great. Before we talk numbers, what's the out-the-door total with every fee included?",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3800000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Get every fee listed.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_03",
+      "speaker": "seller",
+      "text": "There's a $499 doc fee. That's standard on every car we sell.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3800000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "fee", "label": "doc fee", "amount": 49900 }],
+        "tactic_detected": null,
+        "cue": "Doc fee is negotiable",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_04",
+      "speaker": "buyer",
+      "text": "Okay. I've done my homework, and similar Accords around here are closer to thirty-four. I can do thirty-four thousand.",
+      "delay_ms": 4000,
+      "expected": {
+        "current_offer": 3400000,
+        "offer_by": "buyer",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3400000 }],
+        "tactic_detected": null,
+        "cue": "Strong anchor. Now stay quiet.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_05",
+      "speaker": "seller",
+      "text": "Hmm...",
+      "delay_ms": 5000,
+      "expected": {
+        "current_offer": 3400000,
+        "offer_by": "buyer",
+        "new_terms": [],
+        "tactic_detected": "long_pause",
+        "cue": "Stay quiet. Let them talk.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_06",
+      "speaker": "seller",
+      "text": "Thirty-four is a tough one. Best I can do is thirty-seven two.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3720000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3720000 }],
+        "tactic_detected": null,
+        "cue": "Still above max. Hold.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_07",
+      "speaker": "buyer",
+      "text": "That's a big gap from the market. I could go to thirty-four five.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3450000,
+        "offer_by": "buyer",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3450000 }],
+        "tactic_detected": null,
+        "cue": "Right at target. Hold.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_08",
+      "speaker": "seller",
+      "text": "Let me go talk to my manager and see what I can do.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3450000,
+        "offer_by": "buyer",
+        "new_terms": [],
+        "tactic_detected": "manager_check",
+        "cue": "Expected move. Stay patient.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_09",
+      "speaker": "seller",
+      "text": "Good news. My manager says we can do thirty-six thousand. That's a great deal on this car.",
+      "delay_ms": 5000,
+      "expected": {
+        "current_offer": 3600000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3600000 }],
+        "tactic_detected": null,
+        "cue": "At your max. Counter lower.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_10",
+      "speaker": "buyer",
+      "text": "I appreciate that, but I'm staying close to thirty-four five.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3450000,
+        "offer_by": "buyer",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3450000 }],
+        "tactic_detected": null,
+        "cue": "Good. Hold your number.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_11",
+      "speaker": "seller",
+      "text": "Alright, thirty-five four, and I'll throw in the all-weather floor mats.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [
+          { "type": "price", "label": "vehicle price", "amount": 3540000 },
+          { "type": "item", "label": "floor mats", "amount": 0 }
+        ],
+        "tactic_detected": null,
+        "cue": "Under max. Push further.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_12",
+      "speaker": "seller",
+      "text": "Let me ask you this. What monthly payment are you looking for? I can get you in at $489 a month.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": "monthly_payment_framing",
+        "cue": "Redirect to total price",
+        "cue_detail": "$489/mo × 72 = $35,208",
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_13",
+      "speaker": "buyer",
+      "text": "I'm focused on the total price, not the monthly payment.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Keep it on total.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_14",
+      "speaker": "seller",
+      "text": "Understood. But honestly, this price is only good today. I've got another buyer coming in at four.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": "false_urgency",
+        "cue": "Pressure tactic. You can walk.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_15",
+      "speaker": "buyer",
+      "text": "If it sells, it sells. I'm happy to keep looking.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Walk-away power. Stay calm.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_16",
+      "speaker": "seller",
+      "text": "Okay, okay. Are you trading anything in? I can work your trade into the number.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": "trade_in_bundling",
+        "cue": "Settle price first, trade-in separately",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_17",
+      "speaker": "buyer",
+      "text": "No trade-in today. Let's settle the price of the car first.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3540000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Price comes first.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_18",
+      "speaker": "seller",
+      "text": "Fine. Thirty-four nine-forty. That's as low as I can go.",
+      "delay_ms": 4000,
+      "expected": {
+        "current_offer": 3494000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3494000 }],
+        "tactic_detected": "near_comparable",
+        "cue": "Mention the $340 comparable",
+        "cue_detail": "Comparable EX listed at $34,600",
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_19",
+      "speaker": "buyer",
+      "text": "There's an EX across town with similar miles listed at thirty-four six. Match that and we're close.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "buyer",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3460000 }],
+        "tactic_detected": null,
+        "cue": "Strong point. Now wait.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_20",
+      "speaker": "seller",
+      "text": "Thirty-four six. But the doc fee stays.",
+      "delay_ms": 4500,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "vehicle price", "amount": 3460000 }],
+        "tactic_detected": null,
+        "cue": "Ask to waive doc fee",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_21",
+      "speaker": "buyer",
+      "text": "Thirty-four six total, out the door. Waive the doc fee, include the floor mats, and I'll sign today.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "buyer",
+        "new_terms": [
+          { "type": "fee", "label": "doc fee", "amount": 0 },
+          { "type": "item", "label": "floor mats", "amount": 0 }
+        ],
+        "tactic_detected": null,
+        "cue": "Clear ask. Stay quiet.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_22",
+      "speaker": "seller",
+      "text": "You drive a hard bargain. Okay. Thirty-four six, doc fee waived, floor mats included.",
+      "delay_ms": 4500,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "seller",
+        "new_terms": [
+          { "type": "price", "label": "vehicle price", "amount": 3460000 },
+          { "type": "fee", "label": "doc fee", "amount": 0 },
+          { "type": "item", "label": "floor mats", "amount": 0 }
+        ],
+        "tactic_detected": null,
+        "cue": "Deal reached. Confirm the terms.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_23",
+      "speaker": "buyer",
+      "text": "Great. So thirty-four thousand six hundred total, with no other fees or add-ons?",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Confirm nothing else added",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_24",
+      "speaker": "seller",
+      "text": "That's right. Thirty-four six is the total. No other fees, no add-ons.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "promise", "label": "no other fees or add-ons", "amount": 0 }],
+        "tactic_detected": null,
+        "cue": "Total confirmed. Lock the deal.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_25",
+      "speaker": "buyer",
+      "text": "Perfect. Let's lock it in.",
+      "delay_ms": 2500,
+      "expected": {
+        "current_offer": 3460000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Tap Lock Deal now",
+        "cue_detail": null,
+        "status": "green"
+      }
+    }
+  ],
+  "expected_agreement": {
+    "price": 3460000,
+    "items": ["2023 Honda Accord EX", "floor mats"],
+    "fees": [{ "label": "doc fee", "amount": 0, "note": "waived" }],
+    "total": 3460000,
+    "source_event_ids": ["evt_21", "evt_22", "evt_24"],
+    "open_questions": []
+  }
+}

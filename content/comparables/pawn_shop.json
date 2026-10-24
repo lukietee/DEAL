@@ -1,0 +1,12 @@
+{
+  "category": "pawn_shop",
+  "illustrative": true,
+  "reference_item": "Fender Player Stratocaster (used)",
+  "disclaimer": "Illustrative comparable prices for demo purposes only. Not real listings.",
+  "listings": [
+    { "id": "pawn_comp_01", "title": "Fender Player Stratocaster, 2020, sunburst", "price": 52000, "source": "Online used-gear marketplace (illustrative)", "condition": "used, light wear", "note": "Includes tremolo arm, no case." },
+    { "id": "pawn_comp_02", "title": "Fender Player Stratocaster, 2021, black", "price": 49900, "source": "Local classifieds (illustrative)", "condition": "used, buckle rash", "note": "Closest match on condition." },
+    { "id": "pawn_comp_03", "title": "Fender Player Stratocaster, 2022, with gig bag", "price": 57500, "source": "Music store used section (illustrative)", "condition": "used, excellent", "note": "Store setup and 30-day return included." },
+    { "id": "pawn_comp_04", "title": "Fender Player Stratocaster, 2019, no trem arm", "price": 46000, "source": "Other pawn shop (illustrative)", "condition": "used, fret wear", "note": "Missing parts, priced lower." }
+  ]
+}

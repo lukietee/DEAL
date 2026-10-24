@@ -1,0 +1,27 @@
+{
+  "script_id": "car_accord",
+  "illustrative": true,
+  "agreement_total": 3460000,
+  "blocked_request": {
+    "description": "Seller adds an unagreed $1,200 protection package at the terminal. Must be blocked: total 3580000 != 3460000 and 'protection package' is not an agreement item or fee.",
+    "line_items": [
+      { "label": "2023 Honda Accord EX", "amount": 3460000 },
+      { "label": "floor mats", "amount": 0 },
+      { "label": "doc fee", "amount": 0 },
+      { "label": "protection package", "amount": 120000 }
+    ],
+    "expected_status": "blocked",
+    "expected_extra_amount": 120000,
+    "contradicting_event_id": "evt_24",
+    "expected_explanation": "The $1,200 protection package was never agreed to; the seller confirmed $34,600 total with no other fees or add-ons."
+  },
+  "corrected_request": {
+    "description": "Seller resubmits exactly what was agreed. Must be approved.",
+    "line_items": [
+      { "label": "2023 Honda Accord EX", "amount": 3460000 },
+      { "label": "floor mats", "amount": 0 },
+      { "label": "doc fee", "amount": 0 }
+    ],
+    "expected_status": "approved"
+  }
+}

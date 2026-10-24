@@ -1,0 +1,232 @@
+{
+  "id": "pawn_guitar",
+  "category": "pawn_shop",
+  "item": "Fender Player Stratocaster (used)",
+  "asking_price": 65000,
+  "target_price": 50000,
+  "max_budget": 57500,
+  "style": "firm",
+  "illustrative": true,
+  "disclaimer": "Role-play conversation. All pricing is illustrative and not a real listing or quote.",
+  "lines": [
+    {
+      "id": "evt_01",
+      "speaker": "seller",
+      "text": "That's a Fender Player Stratocaster, Mexican-made, 2021. We've got it at six-fifty.",
+      "delay_ms": 1500,
+      "expected": {
+        "current_offer": 65000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "guitar price", "amount": 65000 }],
+        "tactic_detected": null,
+        "cue": "Above max. Inspect it first.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_02",
+      "speaker": "buyer",
+      "text": "Can I plug it in? I want to check the frets and the electronics.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 65000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Check condition first.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_03",
+      "speaker": "buyer",
+      "text": "There's buckle rash on the back and the tremolo arm is missing. Used ones go for about five hundred online. I'll do four seventy-five.",
+      "delay_ms": 6000,
+      "expected": {
+        "current_offer": 47500,
+        "offer_by": "buyer",
+        "new_terms": [{ "type": "price", "label": "guitar price", "amount": 47500 }],
+        "tactic_detected": null,
+        "cue": "Strong anchor. Stay quiet.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_04",
+      "speaker": "seller",
+      "text": "Four seventy-five? I paid more than that for it. Six hundred.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 60000,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "price", "label": "guitar price", "amount": 60000 }],
+        "tactic_detected": "anchoring_high",
+        "cue": "Normal pushback. Hold firm.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_05",
+      "speaker": "buyer",
+      "text": "Five hundred, and it has to come with the gig bag.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 50000,
+        "offer_by": "buyer",
+        "new_terms": [
+          { "type": "price", "label": "guitar price", "amount": 50000 },
+          { "type": "item", "label": "gig bag", "amount": 0 }
+        ],
+        "tactic_detected": null,
+        "cue": "Good counter. Now wait.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_06",
+      "speaker": "seller",
+      "text": "Five-fifty with the gig bag. And there's a three percent fee if you pay by card.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 55000,
+        "offer_by": "seller",
+        "new_terms": [
+          { "type": "price", "label": "guitar price", "amount": 55000 },
+          { "type": "item", "label": "gig bag", "amount": 0 },
+          { "type": "fee", "label": "card fee", "amount": 1650 }
+        ],
+        "tactic_detected": "surprise_fee",
+        "cue": "Ask for the all-in total",
+        "cue_detail": "3% card fee = $16.50",
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_07",
+      "speaker": "buyer",
+      "text": "I need the all-in number. No card fee.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 55000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Hold on total.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_08",
+      "speaker": "seller",
+      "text": "That price is only good today. Someone was looking at it this morning.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 55000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": "false_urgency",
+        "cue": "Pressure tactic. You can walk.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_09",
+      "speaker": "buyer",
+      "text": "Then five twenty-five, all in, with the gig bag and a tremolo arm. I'm ready to pay now.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 52500,
+        "offer_by": "buyer",
+        "new_terms": [
+          { "type": "price", "label": "guitar price", "amount": 52500 },
+          { "type": "item", "label": "tremolo arm", "amount": 0 },
+          { "type": "fee", "label": "card fee", "amount": 0 }
+        ],
+        "tactic_detected": null,
+        "cue": "Clear ask. Stay quiet.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_10",
+      "speaker": "seller",
+      "text": "Alright. Five twenty-five, gig bag, I'll find you a trem arm, and no card fee.",
+      "delay_ms": 4500,
+      "expected": {
+        "current_offer": 52500,
+        "offer_by": "seller",
+        "new_terms": [
+          { "type": "price", "label": "guitar price", "amount": 52500 },
+          { "type": "item", "label": "gig bag", "amount": 0 },
+          { "type": "item", "label": "tremolo arm", "amount": 0 },
+          { "type": "fee", "label": "card fee", "amount": 0 }
+        ],
+        "tactic_detected": null,
+        "cue": "Deal reached. Confirm the terms.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_11",
+      "speaker": "buyer",
+      "text": "And if the electronics cut out this week, I can bring it back?",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 52500,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Get the promise confirmed",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_12",
+      "speaker": "seller",
+      "text": "Seven days. Bring it back for a full refund if anything's wrong.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 52500,
+        "offer_by": "seller",
+        "new_terms": [{ "type": "promise", "label": "7-day return", "amount": 0 }],
+        "tactic_detected": null,
+        "cue": "Promise logged. Lock the deal.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_13",
+      "speaker": "buyer",
+      "text": "Deal. Five twenty-five total. Let's lock it in.",
+      "delay_ms": 2500,
+      "expected": {
+        "current_offer": 52500,
+        "offer_by": "buyer",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Tap Lock Deal now",
+        "cue_detail": null,
+        "status": "green"
+      }
+    }
+  ],
+  "expected_agreement": {
+    "price": 52500,
+    "items": ["Fender Player Stratocaster (used)", "gig bag", "tremolo arm", "7-day return"],
+    "fees": [{ "label": "card fee", "amount": 0, "note": "waived" }],
+    "total": 52500,
+    "source_event_ids": ["evt_09", "evt_10", "evt_12"],
+    "open_questions": []
+  }
+}
