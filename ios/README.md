@@ -3,9 +3,9 @@
 One SwiftUI app with two modes (Buyer and Seller), iOS 17+, bundle id `com.lucas.deal`. The
 Xcode project is generated from `project.yml` by XcodeGen. Don't hand-edit `DEAL.xcodeproj`.
 
-## Run it (once Xcode is installed)
+## Run it
 
-1. Install Xcode and the iOS platform, then run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
+1. Install Xcode and the iOS platform, then point `xcode-select` at it (this Mac: `/Applications/Xcode-27.1.0.app`, already selected).
 2. `brew install xcodegen`
 3. `cd ios && xcodegen` (this generates `DEAL.xcodeproj` and `DEAL/Info.plist`).
 4. `open DEAL.xcodeproj`. Xcode resolves the Supabase Swift package on first open.
@@ -28,17 +28,18 @@ Xcode project is generated from `project.yml` by XcodeGen. Don't hand-edit `DEAL
 ```
 ios/
 ├── project.yml                 XcodeGen spec (Info.plist keys, Supabase SPM, ATS local networking)
-└── DEAL/
-    ├── App/                    DEALApp (entry + RootView), AppModel, ModePickerView, SettingsView
-    ├── Buyer/                  BuyerFlowView (router), NewNegotiationView (B2), LiveSessionView (B3 + Fix a term),
-    │                           AgreementReviewView (B4, reused for S3), ChargeAlertView (B5), ReceiptView (B6, reused for S5)
-    ├── Seller/                 SellerFlowView (router + S2 SellerLiveView), JoinSessionView (S1), QRScannerView, TerminalView (S4)
-    ├── Shared/                 Models (Section 6 / backend/src/types.ts), Money (cents ↔ $), APIClient (12.5),
-    │                           SessionLogic (pure derived state: phases, terminal state, cues, line items),
-    │                           SessionStore, SessionSync (protocol + polling), SupabaseRealtimeSessionSync,
-    │                           Config, AppSettings, Components, PlatformCompat
-    ├── Speech/                 SpeechTranscriber protocol + AppleSpeechTranscriber (SFSpeechRecognizer)
-    └── Glasses/                GlassesDisplay protocol + PhoneTeleprompterDisplay + TeleprompterView
+├── DEAL/
+│   ├── App/                    DEALApp (entry + RootView), AppModel, ModePickerView, SettingsView
+│   ├── Buyer/                  BuyerFlowView (router), NewNegotiationView (B2), LiveSessionView (B3 + Fix a term),
+│   │                           AgreementReviewView (B4, reused for S3), ChargeAlertView (B5), ReceiptView (B6, reused for S5)
+│   ├── Seller/                 SellerFlowView (router + S2 SellerLiveView), JoinSessionView (S1), QRScannerView, TerminalView (S4)
+│   ├── Shared/                 Models (Section 6 / backend/src/types.ts), Money (cents ↔ $), APIClient (12.5),
+│   │                           SessionLogic (pure derived state: phases, terminal state, cues, line items),
+│   │                           SessionStore, SessionSync (protocol + polling), SupabaseRealtimeSessionSync,
+│   │                           Config, AppSettings, Components, PlatformCompat
+│   ├── Speech/                 SpeechTranscriber protocol + AppleSpeechTranscriber (SFSpeechRecognizer)
+│   └── Glasses/                GlassesDisplay protocol + PhoneTeleprompterDisplay + TeleprompterView
+└── DEALUITests/               XCUITest smoke tests for the buyer and seller flows (needs the backend running)
 ```
 
 ## How it works
@@ -52,7 +53,39 @@ ios/
 - **Glasses:** `AppModel.glasses` is the `PhoneTeleprompterDisplay` today. Tomorrow, `MetaGlassesDisplay` conforms to `GlassesDisplay` and gets swapped in. B3's "ON GLASSES" card mirrors `currentCue`. A blocked charge overrides the coaching cue with a red alert.
 - **Live mic:** turn off Scripted mode in B3, choose who is speaking, and tap the mic. Each phrase (split at pauses) is posted to `POST /sessions/:id/events`. You can also type lines.
 
-## Verification status (before Xcode was installed)
+## UI smoke tests
+
+`DEALUITests` drives one phone through the real UI and plays the other phone over the HTTP API. Start the
+backend first (`cd backend && npm run dev`), then:
+
+```
+xcodebuild test -project DEAL.xcodeproj -scheme DEAL -destination 'platform=iOS Simulator,name=iPhone 18 Pro'
+```
+
+- `testBuyerFlow`: mode picker → B2 (demo values) → join QR → B3 with Play script → Lock Deal → B4 Confirm → (API: seller confirms, adds the $1,200 protection package) → B5 → Reject → (API: agreed charge + pay) → B6.
+- `testSellerFlow`: (API: create session) → S1 type code → (API: play script with 250 ms spacing, draft, buyer confirms) → S2 → S3 Confirm → S4 → Add line item → "Waiting for buyer approval" with $35,800.00 → (API: buyer rejects) → Tap to Pay → S5.
+- Every step attaches a screenshot to the `.xcresult`. Export them with `xcrun xcresulttool export attachments --path <bundle>.xcresult --output-path <dir>`.
+- With Xcode 27.1, `xcodebuild test` sometimes keeps running after it prints `Test Suite 'All tests' passed`. When that happens, the results are already final and you can stop it.
+
+## Verification status
+
+### With Xcode 27.1 (iOS 27.1 SDK)
+
+| Check | Result |
+|---|---|
+| `xcodegen` generates the project and `Info.plist` | ✅ |
+| Supabase SPM package resolves (`supabase-swift` 2.55.4) | ✅ |
+| `xcodebuild build` for the iOS Simulator | ✅ 0 errors, 0 warnings (after removing a no-op `@preconcurrency` in `QRScannerView`) |
+| `xcodebuild build` for a generic iOS device, `CODE_SIGNING_ALLOWED=NO` | ✅ |
+| `DEALUITests` on the iPhone 18 Pro Simulator (iOS 27.1) against the mock backend | ✅ both pass (buyer about 2 min, which is real script pacing; seller about 35 s) |
+
+**Still not verified:**
+- Signing and running on a physical iPhone. It needs a Team (`DEVELOPMENT_TEAM` in `project.yml`, or Signing & Capabilities in Xcode).
+- Camera QR scanning, the mic/speech permission flow and SFSpeechRecognizer behavior. The Simulator has no camera, and the tests use typed join codes and scripted mode.
+- Haptics and idle-timer behavior
+- Realtime against a real Supabase project. The tests use the default 1 s polling.
+
+### Before Xcode was installed
 
 Xcode isn't installed (Command Line Tools only, Swift 6.3, macOS SDK only), so there was no iOS SDK, Simulator or `xcodebuild`. Checks run so far:
 
@@ -63,13 +96,6 @@ Xcode isn't installed (Command Line Tools only, Swift 6.3, macOS SDK only), so t
 | `SupabaseRealtimeSessionSync.swift` compiled against the real `supabase-swift` 2.55.4 via SwiftPM (macOS) | ✅ builds, runs, no warnings |
 | JSON decoding + pure logic: 95 assertions against **real backend responses** captured in mock mode (session, join, list, comparables, events, script run, agreement draft/locked, blocked/rejected/approved/amended payment requests, receipt, 409 errors) plus tolerance cases | ✅ all pass |
 | Live smoke test: `APIClient` drove the whole 12.6 demo flow against a running mock backend (create → join → comparables → play script → 409 on replay → event → fix term → draft → confirm ×2 → blocked → reject → agreed charge → pay → receipt summary) | ✅ all pass (108 total assertions) |
-| `project.yml` YAML parses | ✅ (not yet run through `xcodegen`) |
+| `project.yml` YAML parses | ✅ |
 
-**Not verified yet (needs Xcode):**
-- Real iOS SDK compile, `xcodegen` generation, signing, Info.plist output
-- Runtime UI and layout on iPhone screens
-- Camera QR scanning, the mic/speech permission flow and SFSpeechRecognizer behavior
-- Haptics and idle-timer behavior
-- Realtime against a real Supabase project
-
-Catalyst typechecking is a close proxy for iOS, but it isn't identical.
+Catalyst typechecking turned out to be a good proxy. The first real iOS build had no errors.

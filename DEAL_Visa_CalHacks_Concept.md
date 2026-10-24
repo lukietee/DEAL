@@ -400,24 +400,24 @@ Full replay, insights dashboard, personalized coaching over time, live market re
 | Item | Status |
 |---|---|
 | Concept, screens, stack, data model | ✅ Done (this doc) |
-| macOS update | ⏳ In progress (was on 26.4; latest Xcode required a newer macOS) |
-| Xcode | ❌ Not installed (only Command Line Tools present) |
+| macOS update | ✅ Done (macOS 27) |
+| Xcode | ✅ Xcode 27.1 installed and selected; iOS 27.0 + 27.1 Simulator runtimes; `xcodegen` installed |
 | Node.js | ✅ v24 installed |
 | Disk space | ✅ ~769 GB free |
 | API keys (Anthropic, Supabase, Stripe) | ❓ Unknown — check `backend/.env` |
 | Backend code | ✅ Mock mode done: 78 tests pass, `scripts/demo.sh` passes end to end. Real Claude/Supabase/Stripe paths untested (no keys); `schema.sql` not yet run in Supabase. Contract additions listed in `backend/README.md` |
 | Content (scripts, comparables, tactics) | ✅ Done (`content/README.md` has conventions, incl. extra `cue_detail` field) |
-| iOS app | 🟡 All tonight's screens written (`ios/`). Typechecks as Mac Catalyst; APIClient ran full demo flow vs mock backend. NOT yet built for iOS, run through xcodegen, or run on device — needs Xcode. See `ios/README.md` |
+| iOS app | ✅ Simulator / 🟡 device. `xcodegen` + `xcodebuild` build clean (0 warnings) for iOS Simulator and generic iOS device (unsigned); Supabase SPM 2.55.4 resolves. `DEALUITests` (XCUITest) runs the whole 12.6 flow on an iPhone 18 Pro Simulator vs the mock backend, both sides: buyer (mode picker, B2, B3 scripted, B4 draft and locked, B5 blocked $1,200, reject, B6) and seller (S1 code entry, S2, S3, S4 terminal, add line item → waiting, buyer rejects, Tap to Pay, S5). Not yet run on a physical iPhone: needs a signing Team. Camera QR, live mic/speech and Supabase Realtime are untested. See `ios/README.md` |
 | Glasses integration | ❌ Tomorrow (Neural Band arriving tomorrow) |
 | Apple Tap to Pay entitlement | ❌ Not requested yet |
 
 ### 12.2 Setup Checklist (do after the macOS update)
 
-1. [ ] Install **Xcode** from the Mac App Store. Open it once; accept extra components and the **iOS platform**.
+1. [x] Install **Xcode** from the Mac App Store. Open it once; accept extra components and the **iOS platform**.
 2. [ ] **Xcode → Settings → Accounts**: sign in with Apple ID.
-3. [ ] Run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
+3. [x] Run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
 4. [ ] Connect the iPhone to Xcode once, then **Settings → Privacy & Security → Developer Mode → On**.
-5. [ ] Install Homebrew if missing (check with `which brew`), then `brew install xcodegen`. XcodeGen generates the Xcode project from `ios/project.yml`, so agents never hand-edit `.pbxproj` files.
+5. [x] Install Homebrew if missing (check with `which brew`), then `brew install xcodegen`. XcodeGen generates the Xcode project from `ios/project.yml`, so agents never hand-edit `.pbxproj` files.
 6. [ ] Create a **Supabase** project (free tier). Note the project URL, anon key, and service-role key.
 7. [ ] Create a **Stripe** account; get the **test-mode** secret key (`sk_test_...`).
 8. [ ] Get an **Anthropic API key**.
