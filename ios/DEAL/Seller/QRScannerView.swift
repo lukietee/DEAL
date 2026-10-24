@@ -43,7 +43,7 @@ struct QRScannerView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {}
 
-    final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
+    final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
         var onScan: ((String) -> Void)?
         private let captureSession = AVCaptureSession()
         private var previewLayer: AVCaptureVideoPreviewLayer?
