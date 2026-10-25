@@ -6,9 +6,18 @@ import Foundation
 /// No secret keys belong in this file. The Supabase anon key is a public,
 /// read-only key; the service-role key must never appear in the iOS app.
 enum Config {
-    /// Simulator can reach the Mac via localhost. On a device use the ngrok URL
-    /// (or the Mac's LAN IP) via Settings.
-    static let defaultBackendURL = "http://localhost:3000"
+    /// Simulator can reach the Mac via localhost. A device build uses `DEAL_BACKEND_URL`
+    /// (Info.plist `DEALBackendURL`, e.g. `xcodebuild ... DEAL_BACKEND_URL=http://192.168.1.20:3000`)
+    /// when set; otherwise set the Mac's LAN IP or an https tunnel URL in Settings.
+    static let defaultBackendURL: String = {
+        #if targetEnvironment(simulator)
+        return "http://localhost:3000"
+        #else
+        let built = (Bundle.main.object(forInfoDictionaryKey: "DEALBackendURL") as? String)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        return built.hasPrefix("http") ? built : "http://localhost:3000"
+        #endif
+    }()
 
     /// Leave empty to use polling (backend in-memory mock mode has no Supabase).
     static let defaultSupabaseURL = ""

@@ -25,7 +25,10 @@ final class AppSettings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        backendURLString = defaults.string(forKey: Keys.backendURL) ?? Config.defaultBackendURL
+        let saved = defaults.string(forKey: Keys.backendURL) ?? ""
+        // A saved localhost/blank value is useless on a device; prefer the build's default there.
+        backendURLString = saved.isEmpty || (saved.contains("localhost") && !Config.defaultBackendURL.contains("localhost"))
+            ? Config.defaultBackendURL : saved
         supabaseURLString = defaults.string(forKey: Keys.supabaseURL) ?? Config.defaultSupabaseURL
         supabaseAnonKey = defaults.string(forKey: Keys.supabaseAnonKey) ?? Config.defaultSupabaseAnonKey
     }
