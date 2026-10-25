@@ -110,9 +110,11 @@ struct SellerLiveView: View {
                             .font(DealFont.jakarta(30, .extrabold))
                             .kerning(-0.9)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Your asking price \(Money.format(state.session.askingPrice))")
-                            .font(DealFont.jakarta(15))
-                            .foregroundStyle(Palette.mutedWarm)
+                        if let asking = state.session.askingPrice {
+                            Text("Your asking price \(Money.format(asking))")
+                                .font(DealFont.jakarta(15))
+                                .foregroundStyle(Palette.mutedWarm)
+                        }
                     }
                 }
             } content: {

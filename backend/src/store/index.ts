@@ -35,3 +35,16 @@ export interface Store {
 export class NotFoundError extends Error {
   statusCode = 404;
 }
+
+/** Defaults for sessions stored before the auto-session fields existed (set-up sessions: auto false, detected true). */
+export function withSessionDefaults(s: Session): Session {
+  return {
+    ...s,
+    listing: s.listing ?? null,
+    condition_checks: s.condition_checks ?? [],
+    auto: s.auto ?? false,
+    detected: s.detected ?? true,
+    ended_at: s.ended_at ?? null,
+    summary: s.summary ?? null,
+  };
+}

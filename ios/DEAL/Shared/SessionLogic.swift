@@ -39,7 +39,8 @@ struct GlassesCue: Equatable, Sendable {
     var detail: String?
     var status: StatusColor
     var currentOffer: Int?
-    var target: Int
+    /// nil when the session has no target (listening sessions).
+    var target: Int?
     var isAlert: Bool = false
     /// Identity of what triggered the cue, so displays only update on change.
     var sourceID: String
@@ -178,11 +179,13 @@ extension SessionState {
     /// "Asked $38,000, paid $34,600, blocked $1,200"
     var receiptSummary: String {
         if let s = receipt?.summary, !s.isEmpty { return s }
-        let asked = Money.format(receipt?.askingPrice ?? session.askingPrice)
         let paid = Money.format(receipt?.amount ?? agreement?.total ?? 0)
         let blocked = blockedTotal
-        return blocked > 0 ? "Asked \(asked), paid \(paid), blocked \(Money.format(blocked))"
-                           : "Asked \(asked), paid \(paid)"
+        let blockedPart = blocked > 0 ? ", blocked \(Money.format(blocked))" : ""
+        guard let askedCents = receipt?.askingPrice ?? session.askingPrice else {
+            return "Paid \(paid)\(blockedPart)"
+        }
+        return "Asked \(Money.format(askedCents)), paid \(paid)\(blockedPart)"
     }
 
     /// The cue that should be on the glasses right now. A blocked charge overrides coaching cues.
@@ -222,17 +225,19 @@ enum ChargeMath {
 
 enum OfferMath {
     /// Progress from asking (0) to target (1), clamped. nil when no offer.
-    static func progress(asking: Int, target: Int, offer: Int?) -> Double? {
-        guard let offer else { return nil }
+    static func progress(asking: Int?, target: Int?, offer: Int?) -> Double? {
+        guard let offer, let asking, let target else { return nil }
         guard asking > target else { return offer <= target ? 1 : 0 }
         let p = Double(asking - offer) / Double(asking - target)
         return min(max(p, 0), 1)
     }
 
-    static func label(asking: Int, target: Int, maxBudget: Int, offer: Int?) -> OfferProgressLabel {
+    static func label(asking: Int?, target: Int?, maxBudget: Int?, offer: Int?) -> OfferProgressLabel {
         guard let offer else { return .noOffer }
+        if let maxBudget, offer > maxBudget, target == nil { return .overBudget }
+        guard let target else { return .closing }
         if offer <= target { return .atTarget }
-        if maxBudget > 0, offer > maxBudget {
+        if let maxBudget, offer > maxBudget {
             // Still show progress language if we're well past the midpoint, else flag the budget.
             let p = progress(asking: asking, target: target, offer: offer) ?? 0
             return p < 0.5 ? .overBudget : .closing
@@ -243,10 +248,11 @@ enum OfferMath {
         return .far
     }
 
-    static func status(target: Int, maxBudget: Int, offer: Int?) -> StatusColor {
+    static func status(target: Int?, maxBudget: Int?, offer: Int?) -> StatusColor {
         guard let offer else { return .unknown }
-        if offer <= target { return .green }
-        if maxBudget > 0, offer > maxBudget { return .red }
+        if let target, offer <= target { return .green }
+        if let maxBudget, offer > maxBudget { return .red }
+        if target == nil { return .unknown }
         return .yellow
     }
 }

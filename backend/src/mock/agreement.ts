@@ -4,6 +4,7 @@
 // source_event_ids, open_questions, fee notes, and which promises count as included items.
 import type { z } from "zod";
 import type { AgreementDraftSchema } from "../content.js";
+import { itemName } from "../auto.js";
 import type { DealEvent, Session, Term } from "../types.js";
 import { scriptForEvents } from "./extract.js";
 
@@ -33,8 +34,8 @@ export function mapSourceIds(ids: string[], events: DealEvent[]): string[] {
 export function draftFromTerms(session: Session, events: DealEvent[], hints: DraftHints = {}): AgreementDraft {
   const active = session.terms.filter((t) => !t.removed);
   const priceTerm = [...active].reverse().find((t) => t.type === "price" && t.amount != null);
-  const price = priceTerm?.amount ?? session.current_offer ?? session.asking_price;
-  const items = [session.item];
+  const price = priceTerm?.amount ?? session.current_offer ?? session.asking_price ?? 0;
+  const items = [itemName(session)];
   for (const t of active) {
     const isItem = t.type === "item";
     const isPromiseItem = t.type === "promise" && termLabels(t).some((l) => hints.promiseItemLabels?.has(l));
@@ -50,7 +51,9 @@ export function draftFromTerms(session: Session, events: DealEvent[], hints: Dra
     });
   const openQuestions: string[] = [];
   for (const t of active) if (t.uncertain || t.amount == null) openQuestions.push(`Confirm ${t.label}${t.amount != null ? "" : " amount"}`);
-  if (!priceTerm && session.current_offer == null) openQuestions.push("No price was agreed in the conversation; using the asking price.");
+  if (!priceTerm && session.current_offer == null) {
+    openQuestions.push(session.asking_price != null ? "No price was agreed in the conversation; using the asking price." : "No price was heard in the conversation; set the price before confirming.");
+  }
   const sources = new Set<string>();
   for (const t of active) if (t.source_event_id) sources.add(t.source_event_id);
   const ordered = events.filter((e) => sources.has(e.id)).map((e) => e.id);

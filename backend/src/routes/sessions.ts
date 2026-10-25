@@ -1,20 +1,23 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getComparables, listScriptIds, normalizeCategory } from "../content.js";
+import { getComparables, listScriptIds } from "../content.js";
 import { HttpError, type Deal } from "../deal.js";
 import { ListingSchema } from "../listing.js";
 import { parseBody, type IdParams } from "./util.js";
 
 const cents = z.number().int().nonnegative();
 
+// Every field is optional. No item (and no listing) = an auto "Start listening" session: auto: true, item "",
+// detected: false, category "other", unknown prices null, style "friendly"; the item is detected from the conversation.
 const CreateSession = z.object({
-  category: z.string().min(1).transform(normalizeCategory),
-  item: z.string().min(1),
-  asking_price: cents,
-  target_price: cents,
-  max_budget: cents,
-  style: z.string().min(1).default("firm").transform((s) => s.toLowerCase()),
+  category: z.string().optional(),
+  item: z.string().optional(),
+  asking_price: cents.nullish(),
+  target_price: cents.nullish(),
+  max_budget: cents.nullish(),
+  style: z.string().optional(),
   listing: ListingSchema.nullish(), // from POST /listings/parse; stored as session.listing
+  auto: z.boolean().optional(),
 });
 
 export function sessionRoutes(app: FastifyInstance, deal: Deal) {
@@ -37,6 +40,9 @@ export function sessionRoutes(app: FastifyInstance, deal: Deal) {
     await deal.deleteAll();
     return { deleted: true };
   });
+
+  // End of conversation (with or without a payment): ended_at, status "ended" unless paid, summary. Idempotent.
+  app.post<{ Params: IdParams }>("/sessions/:id/end", async (req) => deal.endSession(req.params.id));
 
   app.post<{ Params: IdParams }>("/sessions/:id/research", async (req, reply) => {
     reply.code(202);

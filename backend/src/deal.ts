@@ -1,8 +1,9 @@
 // Core DEAL business logic, independent of HTTP. Routes are thin wrappers around this.
 import { randomBytes, randomUUID } from "node:crypto";
-import { cueResearchFrom, type Ai } from "./ai/index.js";
+import { cueResearchFrom, researchRange, type Ai } from "./ai/index.js";
+import { PLACEHOLDER_ITEM, guessSpeaker, itemName, listingFromClaims, normalizeDetectedCategory } from "./auto.js";
 import type { Config } from "./config.js";
-import { getScript, getScriptFile } from "./content.js";
+import { getScript, getScriptFile, normalizeCategory } from "./content.js";
 import { computeFingerprint, fingerprintPayload, shortFingerprint, verifyFingerprint } from "./fingerprint.js";
 import { checkPaymentRequest, matchLineItem, sumLineItems } from "./mismatch.js";
 import {
@@ -36,14 +37,25 @@ export interface ScriptRun {
   started_at: string;
 }
 
+/** POST /sessions. Every field is optional: no item = an auto ("Start listening") session. */
 export interface NewSessionInput {
-  category: string;
-  item: string;
-  asking_price: number;
-  target_price: number;
-  max_budget: number;
-  style: string;
+  category?: string;
+  item?: string;
+  asking_price?: number | null;
+  target_price?: number | null;
+  max_budget?: number | null;
+  style?: string;
   listing?: Listing | null;
+  auto?: boolean;
+}
+
+/** Auto sessions keep detecting while the item (or its asking price) is unknown, for at most this many lines. */
+const MAX_DETECT_LINES = 40;
+const AUTO_LISTING_PREFIX = "Heard in conversation";
+
+function needsDetection(s: Session, speechLines: number): boolean {
+  return s.auto && !s.ended_at && speechLines > 0 && speechLines <= MAX_DETECT_LINES
+    && (!s.detected || s.item === PLACEHOLDER_ITEM || s.asking_price == null);
 }
 
 export interface TermCorrection {
@@ -56,7 +68,10 @@ export interface TermCorrection {
 export class Deal {
   private locks = new Map<string, Promise<unknown>>();
   private scriptRuns = new Map<string, ScriptRun>();
+  private scriptTimers = new Map<string, NodeJS.Timeout>();
   private timers = new Set<NodeJS.Timeout>();
+  private detectChain = new Map<string, Promise<void>>();
+  private detectQueued = new Set<string>();
 
   constructor(
     public store: Store,
@@ -92,14 +107,19 @@ export class Deal {
       if (!clash || clash.status === "paid") break;
     }
     const t = now();
+    // No item (and no listing title) = auto session: item, category and asking price come from the conversation.
+    const item = input.item?.trim() ? input.item : input.listing?.title?.trim() ? input.listing.title : "";
+    const detected = item.trim() !== "";
+    const auto = !detected || input.auto === true;
+    const category = input.category?.trim() ? normalizeCategory(input.category) : detected ? normalizeDetectedCategory(null, item) : "other";
     const session: Session = {
       id: newId("ses"),
-      category: input.category,
-      item: input.item,
-      asking_price: input.asking_price,
-      target_price: input.target_price,
-      max_budget: input.max_budget,
-      style: input.style,
+      category,
+      item,
+      asking_price: input.asking_price ?? (input.listing?.asking_price ? input.listing.asking_price : null),
+      target_price: input.target_price ?? null,
+      max_budget: input.max_budget ?? null,
+      style: (input.style?.trim() || (auto ? "friendly" : "firm")).toLowerCase(),
       status: "live",
       join_code: code,
       current_offer: null,
@@ -107,11 +127,16 @@ export class Deal {
       terms: [],
       listing: input.listing ?? null,
       condition_checks: [],
+      auto,
+      detected,
+      ended_at: null,
+      summary: null,
       created_at: t,
       updated_at: t,
     };
     const saved = await this.store.insertSession(session);
-    this.research.start(saved); // live market research agents (GET /sessions/:id -> research)
+    // Live market research agents (GET /sessions/:id -> research). Auto sessions start them once the item is detected.
+    if (detected) this.research.start(saved);
     this.research.refreshSuggestions(saved, []); // opening lines before anyone speaks
     return saved;
   }
@@ -132,12 +157,15 @@ export class Deal {
     return Promise.all(
       sessions.map(async (s) => {
         const [agreement, receipt] = await Promise.all([this.store.getLatestAgreement(s.id), this.store.getReceiptForSession(s.id)]);
+        const finalPrice = receipt?.amount ?? s.summary?.final_price ?? (agreement?.status === "locked" ? agreement.total : null);
+        // Savings only for a paid price or an ended session's summarised price, and only when the asking price is known.
+        const paidOrSummarised = receipt?.amount ?? s.summary?.final_price ?? null;
         return {
           ...s,
-          final_price: receipt?.amount ?? (agreement?.status === "locked" ? agreement.total : null),
+          final_price: finalPrice,
           paid_at: receipt?.created_at ?? null,
           blocked_total: receipt?.blocked_total ?? 0,
-          savings: receipt ? s.asking_price - receipt.amount : null,
+          savings: s.asking_price != null && paidOrSummarised != null ? s.asking_price - paidOrSummarised : null,
         };
       }),
     );
@@ -175,16 +203,22 @@ export class Deal {
 
   // ---------- events + live cues ----------
 
-  async addEvent(sessionId: string, speaker: Speaker, text: string, opts: { scriptLineId?: string; scriptId?: string; extraction?: CueExtraction; kind?: EventKind } = {}): Promise<DealEvent> {
-    return this.withLock(sessionId, async () => {
+  /**
+   * speaker "auto": the cue model (or the mock heuristic) decides buyer vs seller; the stored event always has the
+   * resolved speaker. Auto sessions then run product detection after the event is saved (fire-and-forget in real
+   * mode, awaited in mock mode so the response already reflects it).
+   */
+  async addEvent(sessionId: string, speaker: Speaker | "auto", text: string, opts: { scriptLineId?: string; scriptId?: string; extraction?: CueExtraction; kind?: EventKind } = {}): Promise<DealEvent> {
+    const saved = await this.withLock(sessionId, async () => {
       const session = await this.mustSession(sessionId);
       const events = await this.store.listEvents(sessionId);
       const extraction = opts.extraction ?? (await this.ai.cue({ session, recent: events, speaker, text, scriptId: opts.scriptId, research: cueResearchFrom(this.research.research(sessionId)) }));
+      const resolved: Speaker = speaker !== "auto" ? speaker : extraction.speaker ?? guessSpeaker(text, events);
       const event: DealEvent = {
         id: newId("evt"),
         session_id: sessionId,
         seq: (events[events.length - 1]?.seq ?? 0) + 1,
-        speaker,
+        speaker: resolved,
         text,
         timestamp: now(),
         extracted_offer: extraction.current_offer,
@@ -205,8 +239,115 @@ export class Deal {
       });
       const updated = await this.store.getSession(sessionId);
       if (updated) this.research.refreshSuggestions(updated, [...events, saved]);
-      return saved;
+      return { saved, auto: updated?.auto ?? false };
     });
+    if (saved.auto) {
+      const detection = this.scheduleDetect(sessionId);
+      if (this.ai.kind === "mock") await detection;
+    }
+    return saved.saved;
+  }
+
+  // ---------- auto sessions: product detection ----------
+
+  /** Serialised per session; a run already queued (not started) absorbs later requests, since it reads the latest transcript. */
+  private scheduleDetect(sessionId: string): Promise<void> {
+    const queued = this.detectChain.get(sessionId);
+    if (queued && this.detectQueued.has(sessionId)) return queued;
+    this.detectQueued.add(sessionId);
+    const next = (queued ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(async () => {
+        this.detectQueued.delete(sessionId);
+        await this.runDetect(sessionId);
+      })
+      .catch(() => undefined); // never surfaces: the AI layer already falls back to regex detection
+    this.detectChain.set(sessionId, next);
+    void next.finally(() => { if (this.detectChain.get(sessionId) === next) this.detectChain.delete(sessionId); });
+    return next;
+  }
+
+  private async runDetect(sessionId: string): Promise<void> {
+    const s0 = await this.store.getSession(sessionId);
+    if (!s0) return;
+    const events0 = await this.store.listEvents(sessionId);
+    const speech0 = events0.filter((e) => e.kind === "speech").length;
+    if (!needsDetection(s0, speech0)) return;
+    const d = await this.ai.detect(s0, events0);
+
+    let startResearch = false;
+    const result = await this.withLock(sessionId, async () => {
+      const s = await this.store.getSession(sessionId);
+      if (!s) return null;
+      const events = await this.store.listEvents(sessionId);
+      const speech = events.filter((e) => e.kind === "speech").length;
+      if (!needsDetection(s, speech)) return null;
+      const patch: Partial<Session> = {};
+      if (d.item && (!s.detected || s.item === PLACEHOLDER_ITEM)) {
+        patch.item = d.item;
+        patch.category = normalizeDetectedCategory(d.category, d.item);
+        patch.detected = true;
+        startResearch = true;
+      } else if (!s.detected && speech >= 3) {
+        // Three lines and still no product: use a placeholder so the session shows as detected; keep looking for the
+        // real item. Mock mode starts its (demo-data) research right away; real mode waits for a real item name.
+        patch.item = PLACEHOLDER_ITEM;
+        patch.category = "other";
+        patch.detected = true;
+        startResearch = this.ai.kind === "mock";
+      }
+      if (s.asking_price == null && d.asking_price != null) patch.asking_price = d.asking_price;
+      const item = patch.item ?? s.item;
+      const asking = patch.asking_price ?? s.asking_price;
+      const autoListing = s.listing?.source === "other" && s.listing.description.startsWith(AUTO_LISTING_PREFIX);
+      if (item.trim() && !s.listing && d.condition_claims.length) {
+        patch.listing = listingFromClaims(item, asking, d.condition_claims);
+      } else if (autoListing && s.listing && (patch.item || patch.asking_price != null || d.condition_claims.some((c) => !s.listing!.condition_claims.includes(c)))) {
+        const claims = [...new Set([...s.listing.condition_claims, ...d.condition_claims])].slice(0, 8);
+        patch.listing = listingFromClaims(item, asking, claims);
+      }
+      if (!Object.keys(patch).length) return null;
+      return { session: await this.store.updateSession(sessionId, patch), events };
+    });
+    if (!result) return;
+    if (startResearch) this.research.start(result.session);
+    this.research.refreshSuggestions(result.session, result.events);
+  }
+
+  // ---------- end of conversation ----------
+
+  /**
+   * POST /sessions/:id/end: stop a playing script, set ended_at (+ status "ended" unless paid) and write the
+   * history summary. Idempotent: once a summary exists it is returned as is.
+   */
+  async endSession(sessionId: string): Promise<Session> {
+    await this.mustSession(sessionId);
+    this.stopScript(sessionId);
+    await this.detectChain.get(sessionId); // let a pending detection land so the summary names the item
+    return this.withLock(sessionId, async () => {
+      const s = await this.mustSession(sessionId);
+      if (s.ended_at && s.summary) return s;
+      const [events, agreement, receipt] = await Promise.all([
+        this.store.listEvents(sessionId),
+        this.store.getLatestAgreement(sessionId),
+        this.store.getReceiptForSession(sessionId),
+      ]);
+      const marketRange = researchRange(cueResearchFrom(this.research.research(sessionId)));
+      const summary = await this.ai.summarize({ session: s, events, agreement, receipt, marketRange });
+      return this.store.updateSession(sessionId, {
+        ended_at: s.ended_at ?? now(),
+        status: s.status === "paid" ? "paid" : "ended",
+        summary,
+      });
+    });
+  }
+
+  /** Stop a playing script for one session (its run is marked done). */
+  private stopScript(sessionId: string) {
+    const timer = this.scriptTimers.get(sessionId);
+    if (timer) { clearTimeout(timer); this.timers.delete(timer); this.scriptTimers.delete(sessionId); }
+    const run = this.scriptRuns.get(sessionId);
+    if (run && !run.done) run.done = true;
   }
 
   // ---------- marketplace listing + condition check ----------
@@ -242,6 +383,7 @@ export class Deal {
     }
     const total = discrepancies.reduce((s, d) => s + d.suggested_discount, 0);
     const first = discrepancies[0];
+    const max = session.max_budget ?? researchRange(cueResearchFrom(this.research.research(sessionId)))?.high ?? null;
     const extraction: CueExtraction = {
       current_offer: session.current_offer,
       offer_by: session.current_offer_by,
@@ -253,7 +395,7 @@ export class Deal {
           ? `${discrepancies.length} issues, ask ${formatCentsShort(total)} off`
           : `Listing says "${first.claim}"`
         : null,
-      status: first ? (session.current_offer != null && session.current_offer > session.max_budget ? "red" : "yellow") : "green",
+      status: first ? (session.current_offer != null && max != null && session.current_offer > max ? "red" : "yellow") : "green",
     };
     const what = input.observation?.trim().replace(/[.!?]+$/, "") || "photo of the item";
     const text = first
@@ -286,11 +428,14 @@ export class Deal {
 
     const lines = script.lines;
     const step = (i: number) => {
+      if (run.done) return; // stopped by POST /sessions/:id/end
       if (i >= lines.length) { run.done = true; return; }
       const line = lines[i]!;
       const delay = intervalMs ?? line.delay_ms;
       const timer = setTimeout(async () => {
         this.timers.delete(timer);
+        if (this.scriptTimers.get(sessionId) === timer) this.scriptTimers.delete(sessionId);
+        if (run.done) return;
         try {
           await this.addEvent(sessionId, line.speaker, line.text, { scriptLineId: line.id, scriptId });
           run.played++;
@@ -301,6 +446,7 @@ export class Deal {
         }
       }, delay);
       this.timers.add(timer);
+      this.scriptTimers.set(sessionId, timer);
     };
     step(0);
     return run;
@@ -309,6 +455,7 @@ export class Deal {
   stopAll() {
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
+    this.scriptTimers.clear();
     this.research.stopAll();
   }
 
@@ -492,7 +639,7 @@ export class Deal {
       const charge = await this.payments.charge({
         amount: pr.amount,
         currency: "usd",
-        description: `DEAL: ${session.item}`,
+        description: `DEAL: ${itemName(session)}`,
         metadata: { session_id: session.id, payment_request_id: pr.id, agreement_fingerprint: agreement.fingerprint ?? "" },
         idempotencyKey: `deal_${pr.id}`,
       });
@@ -510,9 +657,11 @@ export class Deal {
         status: charge.status,
         agreement_fingerprint: agreement.fingerprint!,
         merchant: this.cfg.merchantName,
-        asking_price: session.asking_price,
+        asking_price: session.asking_price ?? pr.amount, // unknown asking (auto session): no savings claimed
         blocked_total: blockedTotal,
-        summary: `Asked ${formatCentsShort(session.asking_price)}, paid ${formatCentsShort(pr.amount)}, blocked ${formatCentsShort(blockedTotal)}`,
+        summary: session.asking_price != null
+          ? `Asked ${formatCentsShort(session.asking_price)}, paid ${formatCentsShort(pr.amount)}, blocked ${formatCentsShort(blockedTotal)}`
+          : `Paid ${formatCentsShort(pr.amount)}, blocked ${formatCentsShort(blockedTotal)}`,
         mock: charge.mock,
         created_at: now(),
       };

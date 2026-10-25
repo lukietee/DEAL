@@ -53,7 +53,9 @@ struct TeleprompterView: View {
                 if let cue {
                     HStack(spacing: 12) {
                         tile(Money.format(cue.currentOffer, placeholder: "—"), "OFFER", valueColor: Palette.ink)
-                        tile(Money.format(cue.target), "TARGET", valueColor: Palette.mutedWarm)
+                        if let target = cue.target {
+                            tile(Money.format(target), "TARGET", valueColor: Palette.mutedWarm)
+                        }
                     }
                 }
 

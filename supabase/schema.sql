@@ -9,13 +9,13 @@
 create table if not exists public.sessions (
   id               text primary key,
   category         text        not null,
-  item             text        not null,
-  asking_price     bigint      not null check (asking_price >= 0),
-  target_price     bigint      not null check (target_price >= 0),
-  max_budget       bigint      not null check (max_budget >= 0),
+  item             text        not null,                        -- '' until detected (auto sessions)
+  asking_price     bigint      check (asking_price >= 0),       -- null = unknown (auto session)
+  target_price     bigint      check (target_price >= 0),       -- null = buyer set none
+  max_budget       bigint      check (max_budget >= 0),         -- null = buyer set none
   style            text        not null default 'firm',
   status           text        not null default 'live'
-                     check (status in ('live', 'agreement_draft', 'locked', 'paid')),
+                     check (status in ('live', 'agreement_draft', 'locked', 'paid', 'ended')),
   join_code        text        not null,
   -- additions beyond Section 6 (live dashboard state):
   current_offer    bigint,
@@ -23,6 +23,10 @@ create table if not exists public.sessions (
   terms            jsonb       not null default '[]'::jsonb,   -- Term[] (B3 "Terms so far", PATCH /terms)
   listing          jsonb,                                       -- Listing from POST /listings/parse (marketplace)
   condition_checks jsonb       not null default '[]'::jsonb,   -- ConditionCheck[] from POST /sessions/:id/condition-check
+  auto             boolean     not null default false,          -- "Start listening" session (item detected from speech)
+  detected         boolean     not null default true,           -- false until an auto session's item is known
+  ended_at         timestamptz,                                 -- POST /sessions/:id/end
+  summary          jsonb,                                       -- SessionSummary {outcome, final_price, headline, key_points}
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
@@ -52,6 +56,18 @@ create table if not exists public.events (
 alter table public.sessions add column if not exists listing jsonb;
 alter table public.sessions add column if not exists condition_checks jsonb not null default '[]'::jsonb;
 alter table public.events   add column if not exists kind text not null default 'speech';
+
+-- Auto ("Start listening") sessions, for databases created before them (no-ops on a fresh run).
+alter table public.sessions add column if not exists auto     boolean not null default false;
+alter table public.sessions add column if not exists detected boolean not null default true;
+alter table public.sessions add column if not exists ended_at timestamptz;
+alter table public.sessions add column if not exists summary  jsonb;
+alter table public.sessions alter column asking_price drop not null;
+alter table public.sessions alter column target_price drop not null;
+alter table public.sessions alter column max_budget   drop not null;
+alter table public.sessions drop constraint if exists sessions_status_check;
+alter table public.sessions add constraint sessions_status_check
+  check (status in ('live', 'agreement_draft', 'locked', 'paid', 'ended'));
 
 create index if not exists events_session_idx on public.events (session_id, seq);
 

@@ -74,9 +74,15 @@ struct APIClient: Sendable {
         return data
     }
 
-    func postEvent(sessionID: String, speaker: Speaker, text: String) async throws -> DealEvent {
+    func postEvent(sessionID: String, speaker: MicSpeaker, text: String) async throws -> DealEvent {
         try await send("POST", "/sessions/\(sessionID.urlPathEscaped)/events",
-                       body: PostEventBody(speaker: speaker, text: text), unwrap: "event")
+                       body: PostEventBody(speaker: speaker.rawValue, text: text), unwrap: "event")
+    }
+
+    /// End the conversation: the backend stamps `ended_at`, sets status `ended` (unless paid) and
+    /// writes `summary`. Idempotent.
+    func endSession(sessionID: String) async throws -> Session {
+        try await send("POST", "/sessions/\(sessionID.urlPathEscaped)/end", body: Optional<Empty>.none, unwrap: "session")
     }
 
     func playScript(sessionID: String, scriptID: String, intervalMs: Int? = Config.scriptIntervalMs) async throws -> PlayScriptResponse {
@@ -197,7 +203,8 @@ struct APIClient: Sendable {
         guard let url = URL(string: baseURL.absoluteString + path) else {
             throw APIError.invalidURL(baseURL.absoluteString + path)
         }
-        let isUpload = path == "/listings/parse" || path.hasSuffix("/condition-check")
+        // Uploads, and `/end` (the backend writes the summary with AI in real mode), can be slow.
+        let isUpload = path == "/listings/parse" || path.hasSuffix("/condition-check") || path.hasSuffix("/end")
         let timeout = path == "/research/preview" ? Self.researchTimeout : isUpload ? Self.uploadTimeout : Config.requestTimeout
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method

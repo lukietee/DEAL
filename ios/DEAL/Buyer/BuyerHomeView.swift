@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// B1. Home: Start Negotiation, the active session (if one is running), recent purchases,
-/// and totals (amount spent, extra charges blocked).
+/// B1. Home: Start listening (no setup: the backend works out the product and prices from the
+/// conversation), Set up with a listing (B2), the active session (if one is running), recent
+/// conversations, and totals (amount spent, extra charges blocked).
 struct BuyerHomeView: View {
     @Environment(AppModel.self) private var model
     @Binding var path: [BuyerRoute]
@@ -12,17 +13,23 @@ struct BuyerHomeView: View {
     @State private var loading = false
     @State private var loadError: String?
     @State private var showSettings = false
+    @State private var startingListening = false
+    @State private var startError: String?
 
-    private var purchases: [Session] { PurchaseHistory.purchases(sessions) }
+    private var conversations: [Session] { PurchaseHistory.conversations(sessions) }
 
     var body: some View {
         ScrollView {
             HeroScaffold(heroBottomPadding: 60) {
                 hero
             } content: {
-                startButton
+                listenButton
                     .padding(.top, -29)
                     .padding(.trailing, 24)
+                setUpButton
+                if let startError {
+                    Text(startError).font(DealFont.caption).foregroundStyle(Palette.red)
+                }
                 activeSessionCard
                 totals
                 recent
@@ -54,28 +61,85 @@ struct BuyerHomeView: View {
         }
     }
 
-    /// Floating white pill that overlaps the hero's corner notch.
-    private var startButton: some View {
-        Button { path.append(.newNegotiation) } label: {
-            HStack {
-                Text("Start Negotiation").font(DealFont.jakarta(17, .bold))
-                Spacer()
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(Palette.sand))
-                    .accessibilityHidden(true)
+    /// Primary action: a big ink pill that overlaps the hero's corner notch. Starts a listening
+    /// session right away, with no item or prices.
+    private var listenButton: some View {
+        Button { Task { await startListening() } } label: {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Start listening").font(DealFont.jakarta(19, .extrabold))
+                    Text("No setup. DEAL works out the item and price.")
+                        .font(DealFont.jakarta(12, .medium))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: 8)
+                ZStack {
+                    Circle().fill(Palette.surface)
+                    if startingListening {
+                        ProgressView().tint(Palette.ink)
+                    } else {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Palette.ink)
+                    }
+                }
+                .frame(width: 52, height: 52)
+                .accessibilityHidden(true)
             }
+            .foregroundStyle(.white)
             .padding(.leading, 24)
-            .padding(.trailing, 6)
-            .frame(height: 58)
-            .background(Capsule().fill(Palette.surface))
-            .shadow(color: .black.opacity(0.12), radius: 9, y: 6)
+            .padding(.trailing, 7)
+            .frame(height: 66)
+            .background(Capsule().fill(Palette.ink))
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Start Negotiation")
+        .disabled(startingListening)
+        .accessibilityLabel("Start listening")
+        .accessibilityIdentifier("startListening")
+    }
+
+    /// Secondary: the original set-up flow (B2: listing import, item, prices).
+    /// Keeps the `startNegotiation` identifier the UI tests tap.
+    private var setUpButton: some View {
+        Button { path.append(.newNegotiation) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "list.bullet.rectangle")
+                    .font(.system(size: 15, weight: .bold))
+                    .accessibilityHidden(true)
+                Text("Set up with a listing").font(DealFont.jakarta(15, .bold))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Palette.mutedWarm)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 50)
+            .background(Capsule().fill(Palette.surface))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 24)
+        .accessibilityLabel("Set up with a listing")
         .accessibilityIdentifier("startNegotiation")
+    }
+
+    /// `POST /sessions {auto: true}` -> B3. The live session view starts the mic.
+    private func startListening() async {
+        startingListening = true
+        defer { startingListening = false }
+        do {
+            let session = try await model.api.createSession(CreateSessionBody(style: NegotiationStyle.firm.rawValue, auto: true))
+            startError = nil
+            let store = model.makeStore(role: .buyer, session: session)
+            store.autoStartMic = true
+        } catch {
+            startError = "Couldn't start listening (\(error.localizedDescription))"
+        }
     }
 
     // MARK: Active session
@@ -106,10 +170,11 @@ struct BuyerHomeView: View {
                             .kerning(1.3)
                             .foregroundStyle(phase == "LIVE" ? Palette.liveRed : Palette.mutedWarm)
                     }
-                    Text(session.item)
+                    Text(session.isDetecting ? "Listening…" : session.displayItem)
                         .font(DealFont.cardTitle)
                         .lineLimit(1)
-                    Text("Offer \(Money.format(offer, placeholder: "—")) · Target \(Money.format(session.targetPrice))")
+                    Text(session.targetPrice.map { "Offer \(Money.format(offer, placeholder: "—")) · Target \(Money.format($0))" }
+                         ?? "Offer \(Money.format(offer, placeholder: "—"))")
                         .font(DealFont.caption)
                         .foregroundStyle(Palette.mutedWarm)
                         .lineLimit(1)
@@ -164,13 +229,13 @@ struct BuyerHomeView: View {
         }
     }
 
-    // MARK: Recent purchases
+    // MARK: Recent conversations
 
     @ViewBuilder
     private var recent: some View {
         SectionHeader(title: "Recent") {
             Button { path.append(.history) } label: {
-                Text(purchases.isEmpty ? "History" : "See all")
+                Text(conversations.isEmpty ? "History" : "See all")
                     .font(DealFont.jakarta(14, .bold))
                     .padding(.horizontal, 16)
                     .frame(height: 40)
@@ -182,27 +247,28 @@ struct BuyerHomeView: View {
         if let loadError {
             Text(loadError).font(DealFont.caption).foregroundStyle(Palette.red)
         }
-        if purchases.isEmpty {
+        if conversations.isEmpty {
             if loading {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
             } else if loadError == nil {
                 SurfaceCard(padding: 20) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("No purchases yet").font(DealFont.jakarta(16, .extrabold))
-                        Text("Lock a deal and pay with DEAL. It shows up here.")
+                        Text("No conversations yet").font(DealFont.jakarta(16, .extrabold))
+                        Text("Tap Start listening. Every conversation shows up here with a summary.")
                             .font(DealFont.jakarta(14))
                             .foregroundStyle(Palette.muted)
                     }
                 }
             }
         } else {
-            let recent = Array(purchases.prefix(3))
+            let recent = Array(conversations.prefix(3))
             VStack(spacing: 0) {
                 ForEach(recent) { session in
-                    Button { path.append(.deal(session)) } label: {
+                    Button { open(session) } label: {
                         PurchaseRow(session: session)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("recentRow-\(session.id)")
                     if session.id != recent.last?.id {
                         Rectangle().fill(Palette.divider).frame(height: 1)
                     }
@@ -211,6 +277,15 @@ struct BuyerHomeView: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 18)
             .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+        }
+    }
+
+    /// Live rows resume the session; everything else opens Deal Detail.
+    private func open(_ session: Session) {
+        if session.historyOutcome.isLive {
+            onResume(model.activeStore?.session.id == session.id ? nil : session)
+        } else {
+            path.append(.deal(session))
         }
     }
 
@@ -257,32 +332,33 @@ struct BuyerHomeView: View {
             sessions = try await model.api.listSessions()
             loadError = nil
         } catch {
-            loadError = "Couldn't load purchases (\(error.localizedDescription))"
+            loadError = "Couldn't load your conversations (\(error.localizedDescription))"
         }
     }
 }
 
-/// One purchase: item, final price, savings vs asking, date. Used on B1 and B7.
+/// One conversation: item (or "Untitled conversation"), date, an outcome chip ("Paid · $520",
+/// "Deal · $200", "No deal", "Live", "Ended") and, for purchases, savings vs asking. Used on B1 and B7.
 struct PurchaseRow: View {
     var session: Session
 
     var body: some View {
+        let outcome = session.historyOutcome
         HStack(alignment: .center, spacing: 12) {
-            IconBadge(systemName: session.category.symbol)
+            IconBadge(systemName: session.auto && !session.isPurchase && session.isDetecting ? "waveform" : session.category.symbol)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.item).font(DealFont.bodyBold).lineLimit(1)
+                Text(session.displayItem).font(DealFont.bodyBold).lineLimit(1)
                 subtitle
                     .font(DealFont.caption)
                     .foregroundStyle(Palette.muted)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(Money.format(session.finalPrice, placeholder: "—"))
-                    .font(DealFont.jakarta(16, .extrabold))
-                if let saved = session.savingsVsAsking, saved > 0 {
+            VStack(alignment: .trailing, spacing: 3) {
+                OutcomeChip(outcome: outcome)
+                if case .paid = outcome, let saved = session.savingsVsAsking, saved > 0 {
                     Text("saved \(Money.format(saved))").font(DealFont.caption).foregroundStyle(Palette.muted)
-                } else if let saved = session.savingsVsAsking, saved < 0 {
+                } else if case .paid = outcome, let saved = session.savingsVsAsking, saved < 0 {
                     Text("\(Money.format(-saved)) over asking").font(DealFont.caption).foregroundStyle(Palette.red)
                 }
             }
@@ -292,7 +368,7 @@ struct PurchaseRow: View {
         .contentShape(Rectangle())
     }
 
-    /// "Oct 24 · $1,200 blocked" or "Oct 12 · Pawn Shop".
+    /// "Oct 24 · $1,200 blocked", "Oct 12 · Pawn Shop" or "Oct 25 · Listening".
     private var subtitle: Text {
         let date = PurchaseRow.shortDate(session.dealDate)
         let prefix = date.isEmpty ? "" : "\(date) · "
@@ -300,6 +376,7 @@ struct PurchaseRow: View {
             let blockedText = Text("\(Money.format(blocked)) blocked").foregroundColor(Palette.red).fontWeight(.semibold)
             return Text("\(prefix)\(blockedText)")
         }
+        if session.isDetecting { return Text(prefix + (session.isEnded ? "Product not detected" : "Listening")) }
         return Text(prefix + session.category.displayName)
     }
 
@@ -309,6 +386,31 @@ struct PurchaseRow: View {
         f.locale = Locale(identifier: "en_US")
         f.dateFormat = "MMM d"
         return f.string(from: date)
+    }
+}
+
+/// History outcome capsule: ink for paid, sand for deals, a red dot for live.
+struct OutcomeChip: View {
+    var outcome: HistoryOutcome
+    var large = false
+
+    var body: some View {
+        let (fill, fg): (Color, Color) = switch outcome {
+        case .paid: (Palette.ink, .white)
+        case .deal: (Palette.sand, Palette.ink)
+        case .live: (Palette.liveDot.opacity(0.16), Palette.liveRed)
+        case .noDeal, .ended: (Palette.ink.opacity(0.08), Palette.muted)
+        }
+        HStack(spacing: 5) {
+            if outcome.isLive { Circle().fill(Palette.liveDot).frame(width: 6, height: 6) }
+            Text(outcome.label)
+                .font(DealFont.jakarta(large ? 14 : 12, .extrabold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(fg)
+        .padding(.horizontal, large ? 14 : 10)
+        .frame(height: large ? 32 : 26)
+        .background(Capsule().fill(fill))
     }
 }
 

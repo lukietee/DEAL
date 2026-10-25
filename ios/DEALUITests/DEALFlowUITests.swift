@@ -18,6 +18,8 @@ final class DEALFlowUITests: XCTestCase {
         app = XCUIApplication()
         // Demo shortcuts on: these tests drive the demo paths (Car demo, Play script, sample observation, prefills).
         app.launchArguments += ["-DEALDemoShortcuts"]
+        // The Simulator has no usable mic: keep "Start listening" from asking for speech / mic permission.
+        app.launchArguments += ["-DEALNoAutoMic"]
         // Optional: point the app at another backend (e.g. a mock on :3300) without changing the default.
         if let url = ProcessInfo.processInfo.environment["DEAL_APP_BACKEND_URL"], !url.isEmpty {
             app.launchArguments += ["-deal.backendURL", url]
@@ -144,6 +146,83 @@ final class DEALFlowUITests: XCTestCase {
         export.tap()
         sleep(2)
         shot("B7-dispute-pack-share")
+    }
+
+    // MARK: Start listening (no setup), typed lines with speaker Auto
+
+    /// B1 Start listening -> B3 "Listening…" -> 4 typed lines (speaker Auto) -> the backend detects
+    /// the Sony headphones and the $220 asking price -> End -> summary sheet -> Done -> B1 Recent.
+    func testListeningFlow() throws {
+        button(startingWith: "I'm Buying").tapWhenReady()
+        let listen = app.buttons["startListening"]
+        XCTAssertTrue(listen.waitForExistence(timeout: 10), "B1 Start listening never appeared")
+        XCTAssertTrue(app.buttons["startNegotiation"].exists, "B1 should keep Set up with a listing")
+        sleep(1)
+        shot("L-B1-home")
+
+        let existing = Set(try sessionIDs())
+        listen.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["detectingProduct"].waitForExistence(timeout: 15),
+                      "B3 should show Listening… until the product is detected")
+        var sid = ""
+        waitUntil(timeout: 15) {
+            guard let new = (try? self.sessionIDs())?.first(where: { !existing.contains($0) }) else { return false }
+            sid = new
+            return true
+        }
+        let created = try XCTUnwrap(try state(sid)["session"] as? [String: Any])
+        XCTAssertEqual(created["auto"] as? Bool, true)
+        XCTAssertTrue(app.staticTexts["researchWaiting"].exists, "research should wait for the product")
+        sleep(1)
+        shot("L-B3-listening")
+
+        let lines = [
+            "Is the Sony WH-1000XM5 still available?",
+            "Yes, I'm selling the Sony WH-1000XM5 headphones for $220",
+            "Would you do 180?",
+            "I can do 200",
+        ]
+        let field = app.textFields["typedLine"]
+        for (i, line) in lines.enumerated() {
+            field.tapWhenReady()
+            field.typeText(line)
+            if i == 0 { shot("L-B3-typing") }
+            app.buttons["sendLine"].tapWhenReady()
+            waitUntil(timeout: 20) { ((try? self.state(sid)["events"] as? [Any])?.count ?? 0) >= i + 1 }
+        }
+        waitUntil(timeout: 30) { ((try? self.state(sid)["session"] as? [String: Any])?["detected"] as? Bool) == true }
+        let detected = try XCTUnwrap(try state(sid)["session"] as? [String: Any])
+        XCTAssertTrue((detected["item"] as? String ?? "").localizedCaseInsensitiveContains("Sony"), "detected item: \(detected["item"] ?? "nil")")
+        let speakers = (try state(sid)["events"] as? [[String: Any]] ?? []).compactMap { $0["speaker"] as? String }
+        XCTAssertTrue(speakers.contains("seller") && speakers.contains("buyer"), "auto lines should resolve to both speakers: \(speakers)")
+        let item = app.staticTexts["sessionItem"]
+        XCTAssertTrue(item.waitForExistence(timeout: 15), "B3 never showed the detected item")
+        XCTAssertTrue(item.label.localizedCaseInsensitiveContains("Sony"))
+        sleep(2)
+        shot("L-B3-detected")
+
+        app.buttons["endConversation"].tapWhenReady()
+        let done = app.buttons["summaryDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 30), "summary sheet never appeared")
+        let ended = try XCTUnwrap(try state(sid)["session"] as? [String: Any])
+        XCTAssertEqual(ended["status"] as? String, "ended")
+        XCTAssertNotNil(ended["summary"] as? [String: Any], "POST /end should write a summary")
+        sleep(1)
+        shot("L-B3-summary")
+        done.tap()
+
+        let row = app.buttons["recentRow-\(sid)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "B1 Recent never listed the conversation")
+        sleep(1)
+        shot("L-B1-recent")
+        app.buttons["purchaseHistory"].tapWhenReady()
+        XCTAssertTrue(app.buttons["historyRow-\(sid)"].waitForExistence(timeout: 15), "B7 never listed the conversation")
+        sleep(1)
+        shot("L-B7-history")
+        app.buttons["historyRow-\(sid)"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["dealTranscript"].waitForExistence(timeout: 15), "Deal Detail never showed the transcript")
+        sleep(1)
+        shot("L-B7-detail")
     }
 
     // MARK: Marketplace meetup: buyer phone (UI) + seller via API

@@ -1,26 +1,31 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// B7. Purchase History: item, final price, savings vs asking, date. Taps open Deal Detail.
+/// B7. History: every conversation (paid, deal, no deal, live, ended) with its outcome chip.
+/// Live rows resume the session; the rest open Deal Detail. Totals count paid sessions only.
 struct PurchaseHistoryView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// Resume a live session (`nil` = this phone's active one).
+    var onResume: (Session?) -> Void = { _ in }
     @State private var sessions: [Session] = []
     @State private var loaded = false
     @State private var loadError: String?
     @State private var query = ""
 
     private var purchases: [Session] { PurchaseHistory.purchases(sessions) }
+    private var conversations: [Session] { PurchaseHistory.conversations(sessions) }
 
     private var filtered: [Session] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return purchases }
-        return purchases.filter {
-            $0.item.localizedCaseInsensitiveContains(q) || $0.category.displayName.localizedCaseInsensitiveContains(q)
+        guard !q.isEmpty else { return conversations }
+        return conversations.filter {
+            $0.displayItem.localizedCaseInsensitiveContains(q) || $0.category.displayName.localizedCaseInsensitiveContains(q)
+                || ($0.summary?.headline.localizedCaseInsensitiveContains(q) ?? false)
         }
     }
 
-    /// Purchases grouped by month ("October", or "October 2025" outside the current year).
+    /// Conversations grouped by month ("October", or "October 2025" outside the current year).
     private var months: [(title: String, sessions: [Session])] {
         var groups: [(title: String, sessions: [Session])] = []
         for s in filtered {
@@ -40,7 +45,7 @@ struct PurchaseHistoryView: View {
                             .accessibilityLabel("Back")
                         Spacer()
                     }
-                    Text("Purchase history")
+                    Text("History")
                         .font(DealFont.jakarta(34, .extrabold))
                         .kerning(-1)
                         .frame(maxWidth: .infinity)
@@ -66,8 +71,18 @@ struct PurchaseHistoryView: View {
                             Text(month.title).font(DealFont.jakarta(22, .extrabold)).kerning(-0.4)
                             VStack(spacing: 0) {
                                 ForEach(month.sessions) { session in
-                                    NavigationLink(value: BuyerRoute.deal(session)) {
-                                        PurchaseRow(session: session)
+                                    Group {
+                                        if session.historyOutcome.isLive {
+                                            Button {
+                                                onResume(model.activeStore?.session.id == session.id ? nil : session)
+                                            } label: {
+                                                PurchaseRow(session: session)
+                                            }
+                                        } else {
+                                            NavigationLink(value: BuyerRoute.deal(session)) {
+                                                PurchaseRow(session: session)
+                                            }
+                                        }
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityIdentifier("historyRow-\(session.id)")
@@ -80,10 +95,10 @@ struct PurchaseHistoryView: View {
                         }
                     }
                     if loaded, loadError == nil {
-                        if purchases.isEmpty {
+                        if conversations.isEmpty {
                             SurfaceCard(padding: 20) {
-                                Text("No purchases yet").font(DealFont.jakarta(16, .extrabold))
-                                Text("Deals you pay for with DEAL show up here.")
+                                Text("No conversations yet").font(DealFont.jakarta(16, .extrabold))
+                                Text("Every conversation shows up here with a summary, paid or not.")
                                     .font(DealFont.jakarta(14)).foregroundStyle(Palette.muted)
                             }
                         } else if filtered.isEmpty {
@@ -98,7 +113,7 @@ struct PurchaseHistoryView: View {
         .buyerHeroUnderlay()
         .dealPage()
         .overlay { if !loaded { ProgressView() } }
-        .navigationTitle("Purchase History")
+        .navigationTitle("History")
         .buyerHiddenNavBar()
         .refreshable { await load() }
         .task { await load() }
@@ -140,7 +155,7 @@ struct PurchaseHistoryView: View {
             sessions = try await model.api.listSessions()
             loadError = nil
         } catch {
-            loadError = "Couldn't load purchases (\(error.localizedDescription))"
+            loadError = "Couldn't load your history (\(error.localizedDescription))"
         }
     }
 }
@@ -170,7 +185,8 @@ private struct HistoryTile: View {
     }
 }
 
-/// B7 Deal Detail: offer timeline, key cues, agreement, receipt, Export Dispute Pack.
+/// B7 Deal Detail: summary, offer timeline, key cues, research, transcript (unpaid conversations),
+/// agreement, receipt, and Export Dispute Pack (only when there's an agreement).
 struct DealDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -193,12 +209,17 @@ struct DealDetailView: View {
                         Text(loadError).font(DealFont.caption).foregroundStyle(Palette.red)
                     }
                     if let state {
+                        if let summary = state.session.summary ?? session.summary {
+                            ConversationSummaryCard(summary: summary)
+                        }
                         timelineCard(state)
-                        cuesCard(state)
+                        if !state.keyCues.isEmpty || state.session.isPurchase { cuesCard(state) }
+                        if let research = state.research, !research.agents.isEmpty { researchCard(research) }
+                        if !state.session.isPurchase { transcriptCard(state) }
                         if let agreement = state.agreement { agreementCard(state, agreement) }
                         if !state.refusedCharges.isEmpty { blockedCard(state) }
                         if let receipt = state.receipt { receiptCard(state, receipt) }
-                        exportSection
+                        if state.agreement != nil { exportSection }
                     } else if loadError == nil {
                         ProgressView("Loading deal…").frame(maxWidth: .infinity).padding(.top, 40)
                     }
@@ -224,39 +245,59 @@ struct DealDetailView: View {
 
     private func header(_ state: SessionState?) -> some View {
         let s = state?.session ?? session
-        let paid = state?.receipt?.amount ?? session.finalPrice ?? state?.agreement?.total
-        let saved = paid.map { s.askingPrice - $0 } ?? session.savingsVsAsking
+        let outcome = s.historyOutcome
+        let paid = state?.receipt?.amount ?? session.finalPrice ?? state?.agreement?.total ?? s.summary?.finalPrice
+        let saved: Int? = {
+            guard s.isPurchase else { return nil }
+            if let paid, let asking = s.askingPrice { return asking - paid }
+            return session.savingsVsAsking
+        }()
         let blocked = state?.blockedTotal ?? session.blockedTotal ?? 0
-        let date = TimeFormat.full(state?.receipt?.createdAt ?? session.dealDate)
+        let date = TimeFormat.full(state?.receipt?.createdAt ?? s.dealDate)
+        let hasAgreement = state?.agreement != nil
         return VStack(alignment: .leading, spacing: 16) {
             HStack {
                 CircleIconButton(systemName: "chevron.left", size: 44) { dismiss() }
                     .accessibilityLabel("Back")
                 Spacer()
-                CircleIconButton(systemName: "square.and.arrow.up", size: 44) { showPack = true }
-                    .disabled(pack == nil)
-                    .opacity(pack == nil ? 0.5 : 1)
-                    .accessibilityLabel("Export dispute pack")
+                if hasAgreement {
+                    CircleIconButton(systemName: "square.and.arrow.up", size: 44) { showPack = true }
+                        .disabled(pack == nil)
+                        .opacity(pack == nil ? 0.5 : 1)
+                        .accessibilityLabel("Export dispute pack")
+                }
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text(date.isEmpty ? s.category.displayName : "\(s.category.displayName) · \(date)")
                     .font(DealFont.jakarta(13, .semibold))
                     .foregroundStyle(Palette.mutedWarm)
-                Text(s.item)
+                Text(s.displayItem)
                 .font(DealFont.jakarta(26, .extrabold))
                 .kerning(-0.5)
-                Text(Money.format(paid, placeholder: "—", alwaysShowCents: true))
-                    .font(DealFont.jakarta(52, .extrabold))
-                    .kerning(-2.3)
-                    .lineLimit(1).minimumScaleFactor(0.5)
+                if let paid {
+                    Text(Money.format(paid, alwaysShowCents: true))
+                        .font(DealFont.jakarta(52, .extrabold))
+                        .kerning(-2.3)
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                } else {
+                    Text(outcome.label)
+                        .font(DealFont.jakarta(44, .extrabold))
+                        .kerning(-1.6)
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                }
                 HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Text("Asked")
-                        Text(Money.format(s.askingPrice)).strikethrough()
+                    if !s.isPurchase, paid != nil {
+                        OutcomeChip(outcome: outcome)
                     }
-                    .font(DealFont.jakarta(13, .semibold))
-                    .padding(.horizontal, 12).frame(height: 30)
-                    .background(Capsule().fill(Palette.ink.opacity(0.12)))
+                    if let asking = s.askingPrice {
+                        HStack(spacing: 4) {
+                            Text("Asked")
+                            Text(Money.format(asking)).strikethrough()
+                        }
+                        .font(DealFont.jakarta(13, .semibold))
+                        .padding(.horizontal, 12).frame(height: 30)
+                        .background(Capsule().fill(Palette.ink.opacity(0.12)))
+                    }
                     if let saved, saved > 0 {
                         Text("saved \(Money.format(saved))")
                             .font(DealFont.jakarta(13, .extrabold))
@@ -302,7 +343,7 @@ struct DealDetailView: View {
                 Text("No offers were recorded.").font(DealFont.jakarta(14)).foregroundStyle(Palette.muted)
             } else {
                 if points.count > 1 {
-                    OfferChart(points: points, target: state.session.targetPrice)
+                    OfferChart(points: points, target: state.session.targetPrice ?? 0)
                         .frame(height: 124)
                         .padding(.bottom, 4)
                 }
@@ -401,6 +442,60 @@ struct DealDetailView: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+    }
+
+    // MARK: Research
+
+    private func researchCard(_ research: ResearchState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                cardTitle("Market research")
+                Spacer()
+                if research.isRunning {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            if let range = research.priceRange {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Fair range").font(DealFont.caption).foregroundStyle(Palette.muted)
+                    Text("\(Money.format(range.low)) – \(Money.format(range.high))")
+                        .font(DealFont.jakarta(20, .extrabold)).kerning(-0.4)
+                }
+            }
+            ForEach(research.agents) { agent in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(agent.title).font(DealFont.jakarta(15, .bold))
+                    Text(agent.summary ?? agent.error ?? agent.activity)
+                        .font(DealFont.caption).foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+    }
+
+    // MARK: Transcript
+
+    private func transcriptCard(_ state: SessionState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            cardTitle("Transcript")
+            if state.events.isEmpty {
+                Text("Nothing was said yet.").font(DealFont.jakarta(14)).foregroundStyle(Palette.muted)
+            }
+            ForEach(state.sortedEvents) { event in
+                if event.isConditionCheck {
+                    ConditionCheckLineView(event: event)
+                } else {
+                    TranscriptLineView(event: event)
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+        .accessibilityIdentifier("dealTranscript")
     }
 
     // MARK: Agreement
@@ -612,14 +707,14 @@ struct DealDetailView: View {
     // MARK: Loading
 
     private func load() async {
-        async let packTask: Void = loadPack()
         do {
             state = try await model.api.sessionState(id: session.id)
             loadError = nil
         } catch {
             loadError = "Couldn't load this deal (\(error.localizedDescription))"
         }
-        await packTask
+        // The dispute pack needs an agreement.
+        if state?.agreement != nil { await loadPack() }
     }
 
     private func loadPack() async {

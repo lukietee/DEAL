@@ -9,10 +9,11 @@ struct LiveSessionView: View {
     var store: SessionStore
     var onBackToAgreement: (() -> Void)? = nil
 
-    /// The user's Scripted mode choice; nil = default (on only with demo shortcuts).
+    /// The user's Scripted mode choice; nil = default (on only with demo shortcuts, and never by
+    /// default for a listening session: its scripts are category demos).
     @State private var scriptedChoice: Bool?
     /// Scripted playback is a demo shortcut: without it the live mic is the only input.
-    private var scriptedMode: Bool { model.settings.demoShortcuts && (scriptedChoice ?? true) }
+    private var scriptedMode: Bool { model.settings.demoShortcuts && (scriptedChoice ?? !store.session.auto) }
     @State private var showJoinCode = false
     @State private var showTeleprompter = false
     @State private var fixingTerm: Term?
@@ -21,6 +22,11 @@ struct LiveSessionView: View {
     @State private var typedLine = ""
     @State private var didAutoShowJoin = false
     @State private var showConditionCheck = false
+    @State private var ending = false
+    /// While typing a line the keyboard takes half the screen: the hero collapses to its header.
+    @FocusState private var typing: Bool
+    /// The ended session (with `summary`) shown in the summary sheet after "End".
+    @State private var endedSession: Session?
 
     fileprivate static let quietFill = Color(hex: 0xE3E3E3)
 
@@ -33,7 +39,16 @@ struct LiveSessionView: View {
             VStack(spacing: 0) {
                 // Pinned: hero (header + ON GLASSES cue) and the current offer card.
                 // These never scroll away while the script plays.
-                pinnedPanel(state, compact: compact)
+                if typing {
+                    header(state.session, compact: true)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 4)
+                        .padding(.bottom, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Palette.sand.ignoresSafeArea(edges: .top))
+                } else {
+                    pinnedPanel(state, compact: compact)
+                }
                 // Scrolling: suggested phrases (kept at the top, refreshed after every line),
                 // live research, terms so far, transcript.
                 ScrollViewReader { proxy in
@@ -41,7 +56,9 @@ struct LiveSessionView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             SuggestedPhrasesCard(suggestions: state.suggestions)
                                 .id("phrases")
-                            ResearchPanel(research: state.research, onRerun: { Task { await store.restartResearch() } })
+                            ResearchPanel(research: state.research,
+                                          waitingForProduct: session.isDetecting,
+                                          onRerun: { Task { await store.restartResearch() } })
                             termsSection(state)
                             transcriptSection(state)
                             Color.clear.frame(height: 1).id("bottom")
@@ -50,7 +67,7 @@ struct LiveSessionView: View {
                         .padding(.top, 12)
                         .padding(.bottom, 8)
                     }
-                    .frame(minHeight: compact ? 100 : 150)
+                    .frame(minHeight: typing ? 0 : (compact ? 100 : 150))
                     .clipped()
                     // Fresh phrases arrive after each transcript line: bring them back into view.
                     .onChange(of: state.suggestions?.forEventId) {
@@ -107,11 +124,35 @@ struct LiveSessionView: View {
         .dealFullScreenCover(isPresented: $showTeleprompter) {
             TeleprompterView(display: model.teleprompter)
         }
+        .sheet(item: $endedSession) { ended in
+            ConversationSummarySheet(session: ended) {
+                endedSession = nil
+                model.endSession()
+            }
+        }
         .onAppear {
-            if !didAutoShowJoin, state.events.isEmpty, onBackToAgreement == nil {
+            // A listening session is solo: the seller join code stays one tap away in the toolbar.
+            if !didAutoShowJoin, state.events.isEmpty, onBackToAgreement == nil, !session.auto {
                 didAutoShowJoin = true
                 showJoinCode = true
             }
+        }
+        .task {
+            // B1 "Start listening": the mic goes on straight away (permissions are asked as usual).
+            guard store.autoStartMic else { return }
+            store.autoStartMic = false
+            guard !ProcessInfo.processInfo.arguments.contains(SessionStore.noAutoMicLaunchArgument) else { return }
+            await store.startMic(using: AppleSpeechTranscriber())
+        }
+    }
+
+    /// B3 "End": stop the mic, end the conversation on the backend, then show its summary.
+    private func endConversation() async {
+        ending = true
+        defer { ending = false }
+        paused = false
+        if let ended = await store.endConversation() {
+            endedSession = ended
         }
     }
 
@@ -176,15 +217,53 @@ struct LiveSessionView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    @ViewBuilder
     private func header(_ session: Session, compact: Bool) -> some View {
+        if session.isDetecting {
+            // Listening session, product not known yet.
+            HStack(spacing: 12) {
+                ListeningMic(active: store.isListening && !paused)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Listening…")
+                        .font(DealFont.jakarta(18, .extrabold))
+                    Text("Detecting the product from your conversation")
+                        .font(DealFont.caption)
+                        .foregroundStyle(Palette.mutedWarm)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("detectingProduct")
+        } else {
+            detectedHeader(session, compact: compact)
+        }
+    }
+
+    /// "Ask $38,000 → Target $34,500 · Max $36,000 · Firm · CODE"; unknown prices are left out
+    /// ("Asking $220 · Firm · CODE" for a listening session).
+    private func priceLine(_ session: Session, compact: Bool) -> Text {
+        var main: String
+        switch (session.askingPrice, session.targetPrice) {
+        case let (a?, t?): main = "Ask \(Money.format(a)) → Target \(Money.format(t))"
+        case let (a?, nil): main = "Asking \(Money.format(a))"
+        case let (nil, t?): main = "Asking — · Target \(Money.format(t))"
+        case (nil, nil): main = "Asking —"
+        }
+        guard !compact else { return Text(main) }
+        if let m = session.maxBudget { main += " · Max \(Money.format(m))" }
+        main += " · \(session.style.capitalized) · "
+        return Text(main) + Text(session.joinCode).font(DealFont.mono(13, .medium))
+    }
+
+    private func detectedHeader(_ session: Session, compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(session.item)
+            Text(session.displayItem)
                 .font(DealFont.jakarta(18, .extrabold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            (Text("Ask \(Money.format(session.askingPrice)) → Target \(Money.format(session.targetPrice))")
-             + Text(compact ? "" : " · Max \(Money.format(session.maxBudget)) · \(session.style.capitalized) · ")
-             + Text(compact ? "" : session.joinCode).font(DealFont.mono(13, .medium)))
+                .accessibilityIdentifier("sessionItem")
+            priceLine(session, compact: compact)
                 .font(DealFont.caption)
                 .foregroundStyle(Palette.mutedWarm)
                 .lineLimit(1)
@@ -280,7 +359,9 @@ struct LiveSessionView: View {
     private func transcriptSection(_ state: SessionState) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if state.events.isEmpty {
-                Text(scriptedMode ? "Tap Play script to start the sample conversation." : "Tap the mic to start listening, or type a line.")
+                Text(scriptedMode ? "Tap Play script to start the sample conversation."
+                     : state.session.auto ? (store.isListening ? "Listening. Just talk; lines show up here." : "Tap the mic to listen, or type a line.")
+                     : "Tap the mic to start listening, or type a line.")
                     .font(DealFont.jakarta(14)).foregroundStyle(Palette.muted)
             }
             ForEach(state.sortedEvents) { event in
@@ -291,7 +372,7 @@ struct LiveSessionView: View {
                 }
             }
             if !store.partialTranscript.isEmpty {
-                Text("\(store.micSpeaker.displayName): \(store.partialTranscript)…")
+                Text("\(store.micSpeaker == .auto ? "Hearing" : store.micSpeaker.displayName): \(store.partialTranscript)…")
                     .font(DealFont.jakarta(14)).italic().foregroundStyle(Palette.muted)
             }
         }
@@ -317,6 +398,25 @@ struct LiveSessionView: View {
                     .toggleStyle(.switch)
                     .tint(Palette.sand)
                     .fixedSize()
+                }
+                if onBackToAgreement == nil {
+                    Button {
+                        Task { await endConversation() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if ending {
+                                ProgressView().controlSize(.mini).tint(.white)
+                            } else {
+                                Image(systemName: "stop.fill").font(.system(size: 10, weight: .heavy))
+                            }
+                            Text("End")
+                        }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ink, height: 34, fullWidth: false))
+                    .disabled(ending || store.isBusy)
+                    .fixedSize()
+                    .accessibilityLabel("End")
+                    .accessibilityIdentifier("endConversation")
                 }
             }
             .onChange(of: scriptedMode) { _, scripted in
@@ -398,8 +498,9 @@ struct LiveSessionView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Picker("Speaker", selection: $store.micSpeaker) {
-                    Text("You").tag(Speaker.buyer)
-                    Text("Seller").tag(Speaker.seller)
+                    Text("Auto").tag(MicSpeaker.auto)
+                    Text("You").tag(MicSpeaker.buyer)
+                    Text("Seller").tag(MicSpeaker.seller)
                 }
                 .pickerStyle(.segmented)
                 Button {
@@ -424,8 +525,12 @@ struct LiveSessionView: View {
                     .frame(height: 44)
                     .background(Capsule().fill(Palette.surfaceWarm))
                     .onSubmit(sendTyped)
+                    .focused($typing)
+                    .submitLabel(.send)
+                    .accessibilityIdentifier("typedLine")
                 Button("Send", action: sendTyped)
                     .buttonStyle(PillButtonStyle(kind: .ink, height: 44, fullWidth: false))
+                    .accessibilityIdentifier("sendLine")
                     .disabled(typedLine.isEmpty)
                     .opacity(typedLine.isEmpty ? 0.4 : 1)
             }
@@ -492,6 +597,30 @@ private struct BarButtonStyle: ButtonStyle {
             }
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+/// Listening state on the B3 hero: a mic in a softly breathing ring.
+private struct ListeningMic: View {
+    var active: Bool
+    @State private var breathe = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Palette.surface.opacity(0.55))
+                .frame(width: 52, height: 52)
+                .scaleEffect(breathe ? (active ? 1.2 : 1.07) : 1)
+                .opacity(breathe ? (active ? 0.3 : 0.6) : 0.9)
+            Circle().fill(Palette.surface).frame(width: 42, height: 42)
+            Image(systemName: active ? "mic.fill" : "mic")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(active ? Palette.liveRed : Palette.ink)
+        }
+        .frame(width: 54, height: 54)
+        .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: breathe)
+        .onAppear { breathe = true }
+        .accessibilityHidden(true)
     }
 }
 

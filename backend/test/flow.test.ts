@@ -161,7 +161,10 @@ describe("end-to-end demo flow (mock mode, in-memory)", () => {
   });
 
   it("validates bodies", async () => {
-    expect((await call("POST", "/sessions", { item: "x" })).status).toBe(400);
+    // Every POST /sessions field is optional now (auto sessions), but bad values are still rejected.
+    expect((await call("POST", "/sessions", { item: "x", asking_price: -1 })).status).toBe(400);
+    expect((await call("POST", "/sessions", { auto: "yes" })).status).toBe(400);
+    expect((await call("POST", "/sessions/x/events", { speaker: "narrator", text: "hi" })).status).toBe(400);
     expect((await call("POST", "/sessions", { category: "car", item: "x", asking_price: 10.5, target_price: 1, max_budget: 1, style: "firm" })).status).toBe(400);
     expect((await call("GET", "/sessions/nope")).status).toBe(404);
   });

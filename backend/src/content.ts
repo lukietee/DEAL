@@ -21,6 +21,7 @@ export const CueExtractionSchema = z.object({
   cue: z.string(),
   cue_detail: z.string().nullable().optional(),
   status: z.enum(["green", "yellow", "red"]),
+  speaker: z.enum(["buyer", "seller"]).nullable().optional(), // only for lines posted with speaker "auto"
 });
 
 const FeeSchema = z.object({ label: z.string(), amount: money, note: z.string().optional() });

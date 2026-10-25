@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Agreement, DealEvent, PaymentRequest, Receipt, Session } from "../types.js";
-import { NotFoundError, type Store } from "./index.js";
+import { NotFoundError, withSessionDefaults, type Store } from "./index.js";
 
 /** Supabase (Postgres) store using the service-role key. Backend only. */
 export class SupabaseStore implements Store {
@@ -33,21 +33,25 @@ export class SupabaseStore implements Store {
     return data as T;
   }
 
-  insertSession(s: Session) { return this.insert("sessions", s); }
-  getSession(id: string) { return this.one<Session>("sessions", "id", id); }
+  async insertSession(s: Session) { return withSessionDefaults(await this.insert("sessions", s)); }
+  async getSession(id: string) {
+    const s = await this.one<Session>("sessions", "id", id);
+    return s ? withSessionDefaults(s) : null;
+  }
   async getSessionByJoinCode(code: string) {
     const { data, error } = await this.db
       .from("sessions").select("*").eq("join_code", code.trim().toUpperCase())
       .order("created_at", { ascending: false }).limit(1);
     if (error) throw new Error(`sessions select failed: ${error.message}`);
-    return (data?.[0] as Session) ?? null;
+    const s = data?.[0] as Session | undefined;
+    return s ? withSessionDefaults(s) : null;
   }
   async listSessions() {
     const { data, error } = await this.db.from("sessions").select("*").order("created_at", { ascending: false });
     if (error) throw new Error(`sessions list failed: ${error.message}`);
-    return (data ?? []) as Session[];
+    return ((data ?? []) as Session[]).map(withSessionDefaults);
   }
-  updateSession(id: string, patch: Partial<Session>) { return this.update<Session>("sessions", id, patch); }
+  async updateSession(id: string, patch: Partial<Session>) { return withSessionDefaults(await this.update<Session>("sessions", id, patch)); }
 
   insertEvent(e: DealEvent) { return this.insert("events", e); }
   async listEvents(sessionId: string) {

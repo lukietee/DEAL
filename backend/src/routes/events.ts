@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Deal } from "../deal.js";
 import { parseBody, type IdParams } from "./util.js";
 
-const AddEvent = z.object({ speaker: z.enum(["buyer", "seller"]), text: z.string().min(1).max(2000) });
+const AddEvent = z.object({ speaker: z.enum(["buyer", "seller", "auto"]), text: z.string().min(1).max(2000) });
 const PlayScript = z.object({ script_id: z.string().min(1), interval_ms: z.number().int().min(0).max(60000).optional() });
 const PatchTerm = z.object({
   term_id: z.string().min(1),

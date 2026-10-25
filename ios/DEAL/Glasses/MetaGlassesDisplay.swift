@@ -487,7 +487,8 @@ final class MetaGlassesDisplay: GlassesDisplay {
     static func layout(for cue: GlassesCue) -> FlexBox {
         let statusWord = cue.isAlert ? "ALERT" : (cue.status == .unknown ? "CUE" : cue.status.label.uppercased())
         let offer = "Offer \(Money.format(cue.currentOffer, placeholder: "—"))"
-        let target = "Target \(Money.format(cue.target))"
+        // Listening sessions may have no target yet: leave it off rather than show "$0".
+        let target = cue.target.map { "Target \(Money.format($0))" }
         let detail = cue.detail.flatMap { $0.isEmpty ? nil : $0 }
         return FlexBox(direction: .column, spacing: 10) {
             FlexBox(direction: .row, spacing: 8, crossAlignment: .center) {
@@ -500,7 +501,9 @@ final class MetaGlassesDisplay: GlassesDisplay {
             }
             FlexBox(direction: .row, spacing: 16) {
                 Text(offer, style: .body)
-                Text(target, style: .body, color: .secondary)
+                if let target {
+                    Text(target, style: .body, color: .secondary)
+                }
             }
         }
         .padding(20)

@@ -115,17 +115,20 @@ struct ErrorBanner: View {
 
 /// Offer vs target meter: track from asking (left) to target (right), filled up to the current
 /// offer with a status-colored knob, a tick at the max budget, and "$100 over target" on the right.
+/// Asking / target / max may be unknown (listening sessions): the fill and knob need both asking
+/// and target, and unknown values are left out of the labels.
 struct OfferProgressBar: View {
-    var asking: Int
-    var target: Int
-    var maxBudget: Int
+    var asking: Int?
+    var target: Int?
+    var maxBudget: Int?
     var offer: Int?
 
     private static let filled = Color(hex: 0x8C8478)
     private static let track = Color(hex: 0xE0E0E0)
 
     var body: some View {
-        let progress = OfferMath.progress(asking: asking, target: target, offer: offer) ?? 0
+        let known = OfferMath.progress(asking: asking, target: target, offer: offer)
+        let progress = known ?? 0
         let status = OfferMath.status(target: target, maxBudget: maxBudget, offer: offer)
         let maxPos = OfferMath.progress(asking: asking, target: target, offer: maxBudget)
         VStack(alignment: .leading, spacing: 8) {
@@ -134,12 +137,12 @@ struct OfferProgressBar: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Self.track)
                     Capsule().fill(Self.filled)
-                        .frame(width: offer == nil ? 0 : max(8, w * progress))
-                    if maxBudget > 0, let maxPos, maxPos > 0, maxPos < 1 {
+                        .frame(width: known == nil ? 0 : max(8, w * progress))
+                    if let maxPos, maxPos > 0, maxPos < 1 {
                         Rectangle().fill(Palette.surface).frame(width: 2, height: 14)
                             .offset(x: w * maxPos - 1)
                     }
-                    if offer != nil {
+                    if known != nil {
                         Circle().fill(status.dotColor)
                             .frame(width: 14, height: 14)
                             .overlay(Circle().strokeBorder(Palette.surface, lineWidth: 2))
@@ -152,8 +155,8 @@ struct OfferProgressBar: View {
             GeometryReader { geo in
                 let w = geo.size.width
                 ZStack(alignment: .topLeading) {
-                    Text("Ask \(CompactMoney.short(asking))")
-                    if maxBudget > 0, let maxPos, maxPos > 0.22, maxPos < 0.62 {
+                    Text("Ask \(asking.map(CompactMoney.short) ?? "—")")
+                    if let maxBudget, let maxPos, maxPos > 0.22, maxPos < 0.62 {
                         Text("Max \(CompactMoney.short(maxBudget))")
                             .fixedSize()
                             .frame(width: 90)
@@ -176,6 +179,7 @@ struct OfferProgressBar: View {
     /// "$100 over target", "$400 under target", "At target", or the progress label without an offer.
     private var meterLabel: String {
         guard let offer else { return OfferProgressLabel.noOffer.rawValue.capitalizedFirst }
+        guard let target else { return "No target set" }
         let diff = offer - target
         if diff == 0 { return "At target" }
         return diff > 0 ? "\(Money.format(diff)) over target" : "\(Money.format(-diff)) under target"

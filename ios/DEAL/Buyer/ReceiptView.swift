@@ -52,7 +52,14 @@ struct ReceiptView: View {
             LedgerDock {
                 // Buyer: back to B1 Home (the deal is now in Purchase History). Seller: mode picker.
                 Button("Done") {
-                    if store.role == .buyer { model.endSession() } else { model.exitToModePicker() }
+                    if store.role == .buyer {
+                        // Close the conversation so History gets its summary. Fire-and-forget.
+                        let api = store.api, id = store.session.id
+                        Task.detached { _ = try? await api.endSession(sessionID: id) }
+                        model.endSession()
+                    } else {
+                        model.exitToModePicker()
+                    }
                 }
                 .buttonStyle(PillButtonStyle(kind: .sand, height: 58))
             }
@@ -104,7 +111,7 @@ struct ReceiptView: View {
         let asked = state.receipt?.askingPrice ?? state.session.askingPrice
         let blocked = state.blockedTotal
         return HStack(spacing: 10) {
-            tile(Money.format(asked), "Asked", strike: true)
+            tile(Money.format(asked, placeholder: "—"), "Asked", strike: asked != nil)
             tile(Money.format(amount), "Paid", fill: Palette.sand, labelColor: Palette.mutedWarm)
             tile(Money.format(blocked), "Blocked", valueColor: blocked > 0 ? Palette.red : Palette.ink)
         }

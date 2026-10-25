@@ -17,7 +17,7 @@ Other scripts:
 
 | Command | What it does |
 |---|---|
-| `npm test` | vitest: fingerprint, mismatch rules (match / extra fee / changed amount / tampered), mock extraction, full HTTP flow |
+| `npm test` | vitest: fingerprint, mismatch rules (match / extra fee / changed amount / tampered), mock extraction, full HTTP flow, auto sessions (detection, speaker "auto", `/end`, history) |
 | `npm run build` | `tsc` typecheck (src + tests), then emit `dist/` |
 | `npm start` | run the built server (`node dist/server.js`) |
 | `bash scripts/demo.sh http://<host>:3000` | run the car demo against another URL (`INTERVAL_MS=…` changes the script speed) |
@@ -44,12 +44,13 @@ Content comes from `../content` at runtime (override with `CONTENT_DIR`). No pla
 | Method & path | Body | Returns |
 |---|---|---|
 | `GET /health` *(added)* | | `{ok, mock_mode, ai, store, payments, models, scripts, time}` |
-| `POST /sessions` | `{category, item, asking_price, target_price, max_budget, style, listing?}` | `Session` (201). `category` is normalised (`"Pawn Shop"` → `pawn_shop`). The optional `listing` (a `Listing`) is stored as `session.listing`. Every session also has `condition_checks: ConditionCheck[]` |
+| `POST /sessions` | `{category?, item?, asking_price?, target_price?, max_budget?, style?, listing?, auto?}` (all optional) | `Session` (201). With an `item`: the set-up flow, unchanged (`auto: false`, `detected: true`, `category` normalised, e.g. `"Pawn Shop"` → `pawn_shop`, `style` defaults to `firm`). With no `item` (missing or empty): an **auto session** (see below). The optional `listing` (a `Listing`) is stored as `session.listing`. Every session also has `condition_checks: ConditionCheck[]` |
 | `POST /sessions/join` | `{join_code}` (case-insensitive) | `Session` |
-| `GET /sessions` | | `Session[]`, each with `final_price, paid_at, blocked_total, savings` |
+| `GET /sessions` | | `Session[]` (live, ended and paid; newest first), each with `final_price, paid_at, blocked_total, savings`. `final_price` = receipt amount, else `summary.final_price`, else a locked agreement's total. `savings` = `asking_price − (receipt amount or summary.final_price)`, `null` when either is unknown |
 | `GET /sessions/:id` | | `{session, events, agreement, payment_requests, receipt, script}` |
 | `DELETE /sessions` *(added)* | | `{deleted: true}`. Settings → "Delete all sessions" |
-| `POST /sessions/:id/events` | `{speaker, text}` | `Event` (201) |
+| `POST /sessions/:id/events` | `{speaker: "buyer"\|"seller"\|"auto", text}` | `Event` (201). With `"auto"` the backend decides who spoke; the stored `speaker` is always `buyer` or `seller` |
+| `POST /sessions/:id/end` *(added)* | | `Session` (200). Ends the conversation, with or without a payment: stops a playing script, sets `ended_at`, `status: "ended"` (unless already `paid`) and writes `summary`. Idempotent: a second call returns the stored summary |
 | `POST /sessions/:id/script/play` | `{script_id, interval_ms?}` | `{started: true, script_id, line_count}`. 409 if already playing. Progress is in `GET /sessions/:id` → `script` |
 | `PATCH /sessions/:id/terms` | `{term_id, correction: {label?, amount?, type?, removed?}}` | `{terms: Term[]}` |
 | `POST /sessions/:id/agreement` | | `Agreement` (201, draft). 409 if already locked |
@@ -67,6 +68,50 @@ Content comes from `../content` at runtime (override with `CONTENT_DIR`). No pla
 `Event` has a new field `kind`: `"speech"` for transcript lines, or `"condition_check"` for the event a condition check inserts. The request body limit is 12 MB, so base64 photos fit. Downscale on the phone first, because Claude takes at most 5 MB per image.
 
 Errors are `{error, details?}` with status 400 (validation), 404, 409 (state conflict), 422 (real mode: listing couldn't be read) or 502 (real mode: condition model failed).
+
+### Auto sessions: "Start listening" with no setup (`src/auto.ts`)
+
+The buyer can tap **Start listening** without entering anything. `POST /sessions {}` (no `item`) returns a session with
+`auto: true`, `detected: false`, `item: ""`, `category: "other"`, `asking_price`/`target_price`/`max_budget: null` and
+`style: "friendly"`. No research runs yet. (`auto: true` together with an `item` gives an auto session whose item is already
+known: research starts at once and detection only fills a null asking price. A `listing` with no `item` uses the listing title.)
+
+New `Session` fields (every session; sessions stored before these existed read as `auto: false, detected: true, ended_at: null, summary: null`):
+
+```ts
+auto: boolean; detected: boolean; ended_at: string | null; summary: SessionSummary | null;
+asking_price: number | null; target_price: number | null; max_budget: number | null;   // cents
+status: "live" | "agreement_draft" | "locked" | "paid" | "ended";
+SessionSummary = { outcome: "deal" | "no_deal" | "undecided", final_price: number | null /* cents, set only for "deal" */,
+                   headline: string /* <= 12 words */, key_points: string[] /* <= 4 */ }
+```
+
+- **Speaker "auto".** Post lines with `speaker: "auto"` (one microphone). Real mode: the cue model returns an extra
+  `speaker` field in the same call (no extra latency). Mock mode, and when the model omits it: a verbatim script line takes
+  its script speaker; otherwise "I'll take", "would you do", "can you do", "I can pay", "I'll give", "still available" → buyer;
+  "I'm asking", "firm", "lowest I", "selling" → seller; otherwise the opposite of the previous line (the first line is the buyer).
+- **Product detection.** After each event in an auto session, while `detected` is false, while the item is still the
+  placeholder, or while `asking_price` is null (up to 40 lines), a detection step reads the transcript and extracts
+  `{item, category, asking_price, condition_claims}`. Real mode: `CUE_MODEL`, a small zod-validated JSON prompt, run after the
+  event is saved and serialised per session (it does not delay the cue; a queued run absorbs later lines). Mock mode: regexes
+  ("is the X still available", "selling/this/the/my X for $N", "$N for the X", "X, $N", "asking 220"), run before the event
+  response returns. A buyer's "$150 for the bike?" names the item but is never taken as the asking price.
+- **When the item is found:** `item`, `category` (normalised to `car | pawn_shop | marketplace | electronics | other`),
+  `asking_price` (if heard), `detected: true`, and, when the seller made condition claims ("barely used", "like new", …) and
+  there is no listing, `listing = {source: "other", title: item, category: "marketplace", condition_claims, asking_price,
+  description: "Heard in conversation: …"}`, so condition checks work too. Then the research agents start and suggested phrases refresh.
+- **No product after 3 lines:** `item: "Item from conversation"`, `detected: true`, `category: "other"`. Detection keeps
+  running and a real item named later replaces it (and restarts research). Mock mode starts its demo research on the
+  placeholder; real mode waits for a real item name, so no web searches are spent on the placeholder.
+- **Null target / max.** The cue prompt and suggested phrases never invent the buyer's budget. With no target/max the cue
+  status is judged against the live research fair range (low end and below green, inside yellow, above the high end red), and
+  phrases anchor on that range or ask questions instead of naming a number. Mock cues do the same.
+- **`POST /sessions/:id/end`.** Real mode: `CUE_MODEL` summarises the transcript plus agreement, receipt and research range.
+  Mock mode: a template (receipt → deal at the paid amount; locked agreement → deal at its total; "deal / I'll take it /
+  sounds good" with a standing offer → deal at that offer; "no thanks / I'll pass" → no_deal; otherwise undecided). A receipt
+  always forces `outcome: "deal"` and `final_price` = receipt amount. Headline is cut to 12 words, key points to 4.
+- **Supabase.** New columns `sessions.auto`, `detected`, `ended_at`, `summary jsonb`; the price columns are nullable and the
+  status check allows `'ended'`. `schema.sql` applies all of this idempotently.
 
 ### Marketplace: listings and condition checks (`src/listing.ts`)
 

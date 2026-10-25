@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { z } from "zod";
 import type { Config } from "../config.js";
 import { AgreementDraftSchema, CueExtractionSchema, getTactics } from "../content.js";
 import {
@@ -7,20 +6,22 @@ import {
   decodeImage, isFacebookUrl, mockConditionCheck, mockParseListing, type ConditionInput, type Discrepancy, type Listing, type ListingInput,
 } from "../listing.js";
 import { mockAgreement, type AgreementDraft } from "../mock/agreement.js";
-import { mockCue } from "../mock/extract.js";
+import { lookupScriptLine, mockCue, type PriceRange } from "../mock/extract.js";
+import { clampSummary, guessSpeaker, itemName, mockDetect, mockSummary, normalizeDetectedCategory, type SummaryInput } from "../auto.js";
+import { z } from "zod";
 import { templateExplanation, formatClock } from "../mismatch.js";
 import { formatCents } from "../money.js";
-import type { CueExtraction, DealEvent, LineItem, MismatchDetails, Session, Speaker } from "../types.js";
+import type { CueExtraction, DealEvent, Detection, LineItem, MismatchDetails, Session, SessionSummary, Speaker } from "../types.js";
 import {
-  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, LISTING_SYSTEM, LISTING_URL_SYSTEM, MISMATCH_SYSTEM, agreementUserPrompt,
-  cueUserPrompt, listingUrlPrompt,
+  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, DETECT_SYSTEM, LISTING_SYSTEM, LISTING_URL_SYSTEM, MISMATCH_SYSTEM, SUMMARY_SYSTEM,
+  agreementUserPrompt, cueUserPrompt, detectUserPrompt, listingUrlPrompt, summaryUserPrompt,
 } from "./prompts.js";
 import type { ResearchState } from "../research.js";
 
 export interface CueInput {
   session: Session;
   recent: DealEvent[];
-  speaker: Speaker;
+  speaker: Speaker | "auto"; // "auto": the model (or the heuristic) decides and returns CueExtraction.speaker
   text: string;
   scriptId?: string;
   /** The session's live web research (finished agents only); null until at least one agent is done. */
@@ -54,9 +55,33 @@ export function cueResearchFrom(state: ResearchState | null): CueResearch | null
   };
 }
 
+/** The research fair range (cents) for null-target cues: the first finished agent with both ends. */
+export function researchRange(r: CueResearch | null | undefined): PriceRange | null {
+  const a = r?.agents.find((x) => x.price_low != null && x.price_high != null);
+  return a ? { low: a.price_low!, high: a.price_high! } : null;
+}
+
+const DetectionSchema = z.object({
+  item: z.string().nullable(),
+  category: z.string().nullable().optional(),
+  asking_price: z.number().int().nonnegative().nullable().optional(),
+  condition_claims: z.array(z.string()).nullable().optional(),
+});
+
+const SummarySchema = z.object({
+  outcome: z.enum(["deal", "no_deal", "undecided"]),
+  final_price: z.number().int().nonnegative().nullable().optional(),
+  headline: z.string().min(1),
+  key_points: z.array(z.string()).default([]),
+});
+
 export interface Ai {
   readonly kind: "mock" | "claude";
   cue(input: CueInput): Promise<CueExtraction>;
+  /** Auto sessions: what is being sold, the asking price and the seller's condition claims, from the transcript so far. */
+  detect(session: Session, events: DealEvent[]): Promise<Detection>;
+  /** POST /sessions/:id/end: the history summary. */
+  summarize(input: SummaryInput): Promise<SessionSummary>;
   agreement(session: Session, events: DealEvent[]): Promise<AgreementDraft>;
   explainMismatch(m: MismatchDetails, lineItems: LineItem[]): Promise<string>;
   parseListing(input: ListingInput): Promise<Listing>;
@@ -68,8 +93,19 @@ type Logger = { warn: (obj: unknown, msg?: string) => void };
 export class MockAi implements Ai {
   readonly kind = "mock" as const;
   constructor(private timeZone = "America/Los_Angeles") {}
-  async cue({ session, speaker, text, scriptId }: CueInput) {
-    return mockCue(text, speaker, session, scriptId);
+  async cue({ session, recent, speaker, text, scriptId, research }: CueInput): Promise<CueExtraction> {
+    if (speaker !== "auto") return mockCue(text, speaker, session, scriptId, researchRange(research));
+    // Speaker "auto": a verbatim script line knows its speaker; otherwise the keyword / alternation heuristic.
+    const scripted = lookupScriptLine(text, undefined, scriptId);
+    if (scripted) return { ...scripted.expected, speaker: scripted.speaker };
+    const resolved = guessSpeaker(text, recent);
+    return { ...mockCue(text, resolved, session, scriptId, researchRange(research)), speaker: resolved };
+  }
+  async detect(_session: Session, events: DealEvent[]) {
+    return mockDetect(events);
+  }
+  async summarize(input: SummaryInput) {
+    return mockSummary(input);
   }
   async agreement(session: Session, events: DealEvent[]) {
     return mockAgreement(session, events);
@@ -160,10 +196,39 @@ export class ClaudeAi implements Ai {
   async cue(input: CueInput): Promise<CueExtraction> {
     try {
       const user = cueUserPrompt(input.session, input.recent, { speaker: input.speaker, text: input.text }, getTactics(), input.research ?? null);
-      return await this.structured(this.cfg.cueModel, CUE_SYSTEM, user, CueExtractionSchema, "low");
+      const out = await this.structured(this.cfg.cueModel, CUE_SYSTEM, user, CueExtractionSchema, "low");
+      if (input.speaker !== "auto") return { ...out, speaker: undefined };
+      return { ...out, speaker: out.speaker ?? guessSpeaker(input.text, input.recent) };
     } catch (err) {
       this.log.warn({ err: String(err) }, "cue model failed; using mock extraction");
       return this.fallback.cue(input);
+    }
+  }
+
+  async detect(session: Session, events: DealEvent[]): Promise<Detection> {
+    try {
+      const out = await this.structured(this.cfg.cueModel, DETECT_SYSTEM, detectUserPrompt(session, events), DetectionSchema, "low");
+      const item = out.item?.trim() || null;
+      return {
+        item,
+        category: normalizeDetectedCategory(out.category, item ?? ""),
+        asking_price: out.asking_price && out.asking_price > 0 ? out.asking_price : null,
+        condition_claims: (out.condition_claims ?? []).map((c) => c.trim()).filter(Boolean).slice(0, 8),
+      };
+    } catch (err) {
+      this.log.warn({ err: String(err) }, "detection model failed; using regex detection");
+      return this.fallback.detect(session, events);
+    }
+  }
+
+  async summarize(input: SummaryInput): Promise<SessionSummary> {
+    try {
+      const user = summaryUserPrompt(input.session, input.events, input.agreement, input.receipt, input.marketRange ?? null);
+      const out = await this.structured(this.cfg.cueModel, SUMMARY_SYSTEM, user, SummarySchema, "low");
+      return clampSummary({ outcome: out.outcome, final_price: out.final_price ?? null, headline: out.headline, key_points: out.key_points }, input.receipt);
+    } catch (err) {
+      this.log.warn({ err: String(err) }, "summary model failed; using template");
+      return this.fallback.summarize(input);
     }
   }
 
@@ -173,7 +238,8 @@ export class ClaudeAi implements Ai {
       // Deterministic guard-rails on model output.
       const ids = new Set(events.map((e) => e.id));
       draft.source_event_ids = draft.source_event_ids.filter((id) => ids.has(id));
-      if (draft.items[0] !== session.item) draft.items = [session.item, ...draft.items.filter((i) => i !== session.item)];
+      const main = itemName(session);
+      if (draft.items[0] !== main) draft.items = [main, ...draft.items.filter((i) => i !== main)];
       const computed = draft.price + draft.fees.reduce((s, f) => s + f.amount, 0);
       if (computed !== draft.total) {
         draft.open_questions.push(`Model total ${formatCents(draft.total)} did not equal price + fees; corrected to ${formatCents(computed)}.`);

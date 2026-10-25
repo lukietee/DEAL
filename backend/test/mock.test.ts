@@ -12,7 +12,8 @@ function session(over: Partial<Session> = {}): Session {
   return {
     id: "ses_test", category: "car", item: car.item, asking_price: car.asking_price, target_price: car.target_price,
     max_budget: car.max_budget, style: "firm", status: "live", join_code: "ABC123", current_offer: null,
-    current_offer_by: null, terms: [], listing: null, condition_checks: [], created_at: "", updated_at: "", ...over,
+    current_offer_by: null, terms: [], listing: null, condition_checks: [], auto: false, detected: true, ended_at: null, summary: null,
+    created_at: "", updated_at: "", ...over,
   };
 }
 

@@ -15,6 +15,31 @@ Xcode project is generated from `project.yml` by XcodeGen. Don't hand-edit `DEAL
    - **On an iPhone:** open the gear icon on the mode picker and set the Backend URL to your ngrok https URL or to `http://<Mac LAN IP>:3000`. Then tap **Test connection**.
 8. CLI build check: `xcodebuild -project DEAL.xcodeproj -scheme DEAL -destination 'generic/platform=iOS Simulator' build`
 
+### Start listening (no setup, the primary flow)
+Most of the time the buyer just walks up and starts talking. B1's big black **Start listening** button handles that case:
+- `POST /sessions {auto: true, style}` creates a session with no item and no prices (`auto: true`, `detected: false`, prices `null`), and B3 opens straight away.
+- **The mic starts on its own.** Speech and mic permissions are requested as before. The speaker picker has **Auto | You | Seller**, and Auto is the default for these sessions: lines are posted with `speaker: "auto"` and the backend decides who said what. You or Seller forces the speaker. Typed lines work too. They're the fallback, and the way to drive it in the Simulator.
+- **Until the product is detected,** the B3 hero shows "Listening…" with a softly breathing mic and "Detecting the product from your conversation". The research card says "Research starts once the product is detected".
+- **Once `GET /sessions/:id` returns `detected: true`,** the hero shows the item, "Asking $X" (when the backend heard one) and the "Listing says" claim chips (when `listing` carries the condition claims). Live research and Say this then fill in through the normal sync.
+- Unknown prices are never shown as $0:
+  - the hero says "Asking —";
+  - the offer meter drops its fill and says "No target set";
+  - B4, B6, the teleprompter and the glasses card leave out a missing target or asking price.
+- **End** (black pill next to the status line in B3's bottom bar):
+  1. stops the mic and calls `POST /sessions/:id/end`;
+  2. shows a summary sheet with the item, an outcome chip, the final price, the headline and the key points;
+  3. **Done** returns to B1.
+- **Home** (top left) leaves the session live, as before. B1's card and History rows resume it.
+- B6 **Done** also fires `POST /sessions/:id/end` (fire-and-forget), so paid deals get a summary in History.
+- **Set up with a listing** (the secondary pill under Start listening, still `startNegotiation`) is the original B2 flow and hasn't changed.
+
+**History** (B1 Recent and B7) lists every session from `GET /sessions`, not only purchases.
+- Each row shows the item (or "Untitled conversation"), the date and an outcome chip: **Paid · $X**, **Deal · $X** (summary says they agreed, but they didn't pay through DEAL), **No deal**, **Live** or **Ended**.
+- Live rows resume the session. Every other row opens Deal Detail.
+- Deal Detail shows the summary card, offer timeline, key cues, a market research card (if the session has research) and the transcript (for unpaid conversations).
+- The dispute pack export appears only when there's an agreement.
+- B1 totals (Spent / Blocked / Purchases / Saved) still count paid sessions only.
+
 ### Two-phone demo: Facebook Marketplace meetup (flagship)
 Strangers haggling face to face over a used road bike listed at $650. DEAL coaches the buyer, catches
 condition claims that don't hold up, locks the agreed price, and the seller's phone is the terminal, so
@@ -80,14 +105,14 @@ ios/
 - **Money:** integer cents everywhere. `Money.format` is the only cents-to-dollars conversion, and `Money.parseDollars` parses typed input.
 - **Seller terminal:** the amount is always `agreement.total` and can't be edited. **Tap to Pay** posts line items that mirror the agreement: `items[0]` carries the price, the other items are $0, then the fees. The backend approves the request and the app pays it. **Add line item** posts the same lines plus the extra one, the backend blocks it, and the terminal waits. If the buyer approved an amendment, Tap to Pay charges the already-approved request.
 - **Glasses:** `AppModel.glasses` is a `GlassesFanOut`: every cue goes to the `PhoneTeleprompterDisplay` (always on, fallback + projector mirror) **and** to `MetaGlassesDisplay` (Ray-Ban Meta Display, when connected). B3's "ON GLASSES" card mirrors the teleprompter's `currentCue`. A blocked charge overrides the coaching cue with a red alert. See "Meta Ray-Ban Display glasses" below.
-- **Buyer home and history:** B1 is the root of buyer mode. B2 and B7 push on top of it. While a session runs it takes over the screen; **Home** (top left) steps back to B1 without ending it, and the **Active session** card resumes it. If this phone has no session, the card offers the newest unpaid backend session from the last 6 hours, so a relaunch can re-attach. Totals and history come from `GET /sessions` (`final_price`, `savings`, `blocked_total`, `paid_at`); a purchase is a session with status `paid`. Deal Detail loads `GET /sessions/:id` and `GET /sessions/:id/dispute-pack`. The pack is pretty-printed into a temp `DEAL-dispute-pack-<id>.json` and shared with `ShareLink`. B6 **Done** returns the buyer to B1, and S5 **Done** still goes to the mode picker.
+- **Buyer home and history:** B1 is the root of buyer mode. B2 and B7 push on top of it. While a session runs it takes over the screen; **Home** (top left) steps back to B1 without ending it, and the **Active session** card resumes it. If this phone has no session, the card offers the newest unpaid backend session from the last 6 hours, so a relaunch can re-attach. Totals and history come from `GET /sessions` (`final_price`, `savings`, `blocked_total`, `paid_at`); a purchase is a session with status `paid`. History shows every session with an outcome chip (see "Start listening"). Deal Detail loads `GET /sessions/:id` and `GET /sessions/:id/dispute-pack`. The pack is pretty-printed into a temp `DEAL-dispute-pack-<id>.json` and shared with `ShareLink`. B6 **Done** returns the buyer to B1, and S5 **Done** still goes to the mode picker.
 - **Marketplace:**
   - `POST /listings/parse` takes `{url}`, `{text}` (pasted listing text) or `{image_base64}` (a screenshot from PhotosPicker). Images are downscaled to 1280 px and sent as JPEG at quality 0.7. If the parse call fails, "Use demo values" falls back to a local copy of the demo bike so the demo still runs.
   - B2 sends the listing with `POST /sessions` (its title and price follow any edits you make). B3 reads `session.listing`, and keeps the B2 copy in case the backend doesn't echo it.
   - Check condition (toolbar camera icon) is shown only when the session has a listing, because the backend returns 409 without one. The camera is offered only when one exists, so the Simulator shows PhotosPicker plus a sample observation. Results come from the response and from `session.condition_checks[]`. The cue event (`kind: "condition_check"`) is added to the transcript straight away, styled as a check rather than speech, and goes to the glasses like any other cue.
   - Scripted mode plays `marketplace_bike` for Marketplace sessions, `car_accord` for car and `pawn_guitar` for pawn shop.
   - B6 and S5 lead with `VerifiedHandoffCard` for Marketplace sessions (category `marketplace` or a listing is attached).
-- **Live mic:** turn off Scripted mode in B3, choose who is speaking, and tap the mic. Each phrase (split at pauses) is posted to `POST /sessions/:id/events`. You can also type lines.
+- **Live mic:** turn off Scripted mode in B3, choose who is speaking (Auto lets the backend decide), and tap the mic. Each phrase (split at pauses) is posted to `POST /sessions/:id/events`. You can also type lines.
 
 ## Meta Ray-Ban Display glasses
 
@@ -143,6 +168,8 @@ xcodebuild test -project DEAL.xcodeproj -scheme DEAL -destination 'platform=iOS 
 - `testMarketplaceBuyerFlow`: B1 → B2 Use demo values (listing import, $650 card) → Start Session → B3 (listing claims, Play `marketplace_bike`) → Check condition with the sample observation → discrepancy card pinned in B3 → Lock Deal → B4 Confirm → (API: seller confirms at $520, adds a $20 "gas fee") → B5 → Reject → (API: agreed charge + pay) → B6 "Payment verified" → Done → B1. Shots `M-B2-import`, `M-B3-live`, `M-B3-condition-sheet`, `M-B3-condition`, `M-B5-gas-blocked`, `M-B6-verified`.
 - `testMarketplaceSellerFlow`: (API: create a marketplace session with a listing, play `marketplace_bike`, draft, buyer confirms) → S1 → S3 Confirm → S4 $520.00 → Add line item (pre-filled "gas fee" $20) → waiting with $540.00 → (API: buyer rejects) → Tap to Pay → S5 "Payment verified · Hand over the item". Shots `M-S4-terminal`, `M-S4-gas-waiting`, `M-S5-verified`.
 - `testSellerFlow`: (API: create session) → S1 type code → (API: play script with 250 ms spacing, draft, buyer confirms) → S2 → S3 Confirm → S4 → Add line item → "Waiting for buyer approval" with $35,800.00 → (API: buyer rejects) → Tap to Pay → S5.
+- `testListeningFlow`: B1 → **Start listening** → B3 "Listening…" (research waiting) → types 4 lines with speaker Auto (Sony WH-1000XM5, $220, "Would you do 180?", "I can do 200") → backend detects the item and the $220 asking price → B3 shows the item → **End** → summary sheet (status `ended` with a `summary`) → Done → B1 Recent row → B7 row → Deal Detail transcript. Shots `L-B1-home`, `L-B3-listening`, `L-B3-typing`, `L-B3-detected`, `L-B3-summary`, `L-B1-recent`, `L-B7-history`, `L-B7-detail`. The suite launches with `-DEALNoAutoMic`, so Start listening never triggers the Simulator's permission prompts.
+- To use another backend (for example a mock on :3500): `TEST_RUNNER_DEAL_BACKEND_URL=http://127.0.0.1:3500 TEST_RUNNER_DEAL_APP_BACKEND_URL=http://localhost:3500 xcodebuild test ...`
 - Every step attaches a screenshot to the `.xcresult`. Export them with `xcrun xcresulttool export attachments --path <bundle>.xcresult --output-path <dir>`.
 - With Xcode 27.1, `xcodebuild test` sometimes keeps running after it prints `Test Suite 'All tests' passed`. When that happens, the results are already final and you can stop it.
 

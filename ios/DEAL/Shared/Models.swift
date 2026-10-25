@@ -13,6 +13,20 @@ enum Speaker: String, Codable, Sendable, CaseIterable {
     var displayName: String { self == .buyer ? "You" : "Seller" }
 }
 
+/// Who the mic / typed lines are attributed to. `.auto` sends `speaker: "auto"` and lets the
+/// backend work out buyer vs seller (the stored event carries the real speaker).
+enum MicSpeaker: String, Codable, Sendable, CaseIterable {
+    case auto, buyer, seller
+
+    var displayName: String {
+        switch self {
+        case .auto: "Auto"
+        case .buyer: "You"
+        case .seller: "Seller"
+        }
+    }
+}
+
 enum StatusColor: String, Codable, Sendable {
     case green, yellow, red, unknown
 
@@ -23,7 +37,7 @@ enum StatusColor: String, Codable, Sendable {
 }
 
 enum SessionStatus: String, Codable, Sendable {
-    case live, agreementDraft = "agreement_draft", locked, paid, unknown
+    case live, agreementDraft = "agreement_draft", locked, paid, ended, unknown
 
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
@@ -145,13 +159,43 @@ struct NewTerm: Codable, Sendable, Hashable {
     }
 }
 
+/// `POST /sessions/:id/end` -> `session.summary`: what happened in the conversation.
+struct SessionSummary: Codable, Sendable, Hashable {
+    enum Outcome: String, Codable, Sendable {
+        case deal, noDeal = "no_deal", undecided
+
+        init(from decoder: Decoder) throws {
+            let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? ""
+            self = Outcome(rawValue: raw.lowercased().replacingOccurrences(of: " ", with: "_")) ?? .undecided
+        }
+    }
+
+    var outcome: Outcome
+    var finalPrice: Int?
+    var headline: String
+    var keyPoints: [String]
+
+    init(outcome: Outcome, finalPrice: Int? = nil, headline: String, keyPoints: [String] = []) {
+        self.outcome = outcome; self.finalPrice = finalPrice; self.headline = headline; self.keyPoints = keyPoints
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        outcome = (try? c.decodeIfPresent(Outcome.self, forKey: .outcome)) ?? .undecided
+        finalPrice = try c.decodeLossyIntIfPresent(forKey: .finalPrice)
+        headline = (try? c.decodeIfPresent(String.self, forKey: .headline)) ?? ""
+        keyPoints = (try? c.decodeIfPresent([String].self, forKey: .keyPoints)) ?? []
+    }
+}
+
 struct Session: Codable, Sendable, Identifiable, Hashable {
     var id: String
     var category: DealCategory
     var item: String
-    var askingPrice: Int
-    var targetPrice: Int
-    var maxBudget: Int
+    /// Unknown (nil) for a listening session until the backend hears a price.
+    var askingPrice: Int?
+    var targetPrice: Int?
+    var maxBudget: Int?
     var style: String
     var status: SessionStatus
     var joinCode: String
@@ -169,15 +213,23 @@ struct Session: Codable, Sendable, Identifiable, Hashable {
     var listing: Listing?
     /// `POST /sessions/:id/condition-check` results, oldest first.
     var conditionChecks: [ConditionCheckResult]
+    /// Started with "Start listening" (`POST /sessions {auto: true}`): no item or prices up front.
+    var auto: Bool
+    /// False until the backend has worked out the product from the conversation.
+    var detected: Bool
+    /// Set by `POST /sessions/:id/end`.
+    var endedAt: Date?
+    var summary: SessionSummary?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeLossyString(forKey: .id)
-        category = try c.decodeIfPresent(DealCategory.self, forKey: .category) ?? .other
-        item = try c.decodeIfPresent(String.self, forKey: .item) ?? ""
-        askingPrice = try c.decodeLossyIntIfPresent(forKey: .askingPrice) ?? 0
-        targetPrice = try c.decodeLossyIntIfPresent(forKey: .targetPrice) ?? 0
-        maxBudget = try c.decodeLossyIntIfPresent(forKey: .maxBudget) ?? 0
+        category = (try? c.decodeIfPresent(DealCategory.self, forKey: .category)) ?? .other
+        item = (try? c.decodeIfPresent(String.self, forKey: .item)) ?? ""
+        // 0 is never a real price: treat it like "unknown".
+        askingPrice = try c.decodeLossyIntIfPresent(forKey: .askingPrice).flatMap { $0 > 0 ? $0 : nil }
+        targetPrice = try c.decodeLossyIntIfPresent(forKey: .targetPrice).flatMap { $0 > 0 ? $0 : nil }
+        maxBudget = try c.decodeLossyIntIfPresent(forKey: .maxBudget).flatMap { $0 > 0 ? $0 : nil }
         style = try c.decodeIfPresent(String.self, forKey: .style) ?? NegotiationStyle.firm.rawValue
         status = try c.decodeIfPresent(SessionStatus.self, forKey: .status) ?? .live
         joinCode = try c.decodeLossyStringIfPresent(forKey: .joinCode) ?? ""
@@ -192,6 +244,19 @@ struct Session: Codable, Sendable, Identifiable, Hashable {
         savings = try c.decodeLossyIntIfPresent(forKey: .savings)
         listing = try? c.decodeIfPresent(Listing.self, forKey: .listing)
         conditionChecks = (try? c.decodeIfPresent([ConditionCheckResult].self, forKey: .conditionChecks)) ?? []
+        auto = (try? c.decodeIfPresent(Bool.self, forKey: .auto)) ?? false
+        detected = (try? c.decodeIfPresent(Bool.self, forKey: .detected)) ?? true
+        endedAt = c.decodeFlexibleDateIfPresent(forKey: .endedAt)
+        summary = try? c.decodeIfPresent(SessionSummary.self, forKey: .summary)
+    }
+
+    /// Listening session whose product hasn't been worked out yet.
+    var isDetecting: Bool { auto && (!detected || item.trimmingCharacters(in: .whitespaces).isEmpty) }
+
+    /// Item name for lists and headers.
+    var displayItem: String {
+        let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled conversation" : trimmed
     }
 }
 
@@ -555,21 +620,25 @@ struct Comparable: Codable, Sendable, Identifiable, Hashable {
 
 // MARK: - Request bodies
 
+/// Every field is optional: `{auto: true}` alone starts a listening session.
 struct CreateSessionBody: Encodable, Sendable {
-    var category: String
-    var item: String
-    var askingPrice: Int
-    var targetPrice: Int
-    var maxBudget: Int
-    var style: String
+    var category: String? = nil
+    var item: String? = nil
+    var askingPrice: Int? = nil
+    var targetPrice: Int? = nil
+    var maxBudget: Int? = nil
+    var style: String? = nil
     /// Imported Marketplace listing (optional).
     var listing: Listing? = nil
+    /// "Start listening": the backend detects the product and prices from the conversation.
+    var auto: Bool? = nil
 }
 
 struct JoinSessionBody: Encodable, Sendable { var joinCode: String }
 
 struct PostEventBody: Encodable, Sendable {
-    var speaker: Speaker
+    /// `buyer`, `seller`, or `auto` (the backend decides).
+    var speaker: String
     var text: String
 }
 

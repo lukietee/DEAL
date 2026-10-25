@@ -206,11 +206,11 @@ struct AgreementReviewView: View {
             }
             LedgerDivider()
             LedgerRow(label: "Total", value: Money.format(agreement.total), emphasized: true)
-            if agreement.total <= state.session.targetPrice {
+            if let target = state.session.targetPrice, agreement.total <= target {
                 Label("At or below your target", systemImage: "checkmark.seal.fill")
                     .font(DealFont.jakarta(13, .semibold)).foregroundStyle(Palette.greenText)
                     .padding(.bottom, 14)
-            } else if isBuyer, agreement.total > state.session.maxBudget {
+            } else if isBuyer, let maxBudget = state.session.maxBudget, agreement.total > maxBudget {
                 Label("Above your max budget", systemImage: "exclamationmark.triangle.fill")
                     .font(DealFont.jakarta(13, .semibold)).foregroundStyle(Palette.red)
                     .padding(.bottom, 14)

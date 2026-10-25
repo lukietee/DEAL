@@ -6,18 +6,58 @@ extension Session {
     /// Paid sessions are purchases (B7). `GET /sessions` adds `paid_at` / `final_price`.
     var isPurchase: Bool { status == .paid || paidAt != nil }
 
+    /// Ended with `POST /sessions/:id/end` (a paid session can be ended too).
+    var isEnded: Bool { status == .ended || endedAt != nil }
+
     /// Still negotiating / waiting to be charged: something to resume on B1.
-    var isOpen: Bool { !isPurchase && status != .unknown }
+    var isOpen: Bool { !isPurchase && !isEnded && status != .unknown }
 
     /// Savings vs the asking price. Prefers the backend's `savings`.
     var savingsVsAsking: Int? {
         if let savings { return savings }
-        guard let finalPrice else { return nil }
+        guard let finalPrice, let askingPrice else { return nil }
         return askingPrice - finalPrice
     }
 
     /// When the deal happened, for sorting and the history row.
-    var dealDate: Date? { paidAt ?? updatedAt ?? createdAt }
+    var dealDate: Date? { paidAt ?? endedAt ?? updatedAt ?? createdAt }
+
+    /// The outcome chip on history rows.
+    var historyOutcome: HistoryOutcome {
+        if isPurchase { return .paid(finalPrice ?? summary?.finalPrice) }
+        switch summary?.outcome {
+        case .deal: return .deal(summary?.finalPrice ?? finalPrice)
+        case .noDeal: return .noDeal
+        default: break
+        }
+        return isEnded ? .ended : .live
+    }
+}
+
+/// What happened in a conversation, as shown on B1 Recent / B7 rows.
+enum HistoryOutcome: Equatable, Sendable {
+    /// Paid through DEAL.
+    case paid(Int?)
+    /// The summary says they agreed (paid some other way, or not yet).
+    case deal(Int?)
+    case noDeal
+    /// Still running: the row resumes it.
+    case live
+    /// Ended without a clear outcome.
+    case ended
+
+    /// "Paid · $520", "Deal · $200", "No deal", "Live", "Ended".
+    var label: String {
+        switch self {
+        case .paid(let p): p.map { "Paid · \(Money.format($0))" } ?? "Paid"
+        case .deal(let p): p.map { "Deal · \(Money.format($0))" } ?? "Deal"
+        case .noDeal: "No deal"
+        case .live: "Live"
+        case .ended: "Ended"
+        }
+    }
+
+    var isLive: Bool { self == .live }
 }
 
 struct PurchaseTotals: Equatable, Sendable {
@@ -30,7 +70,18 @@ struct PurchaseTotals: Equatable, Sendable {
 enum PurchaseHistory {
     /// Paid sessions, newest first.
     static func purchases(_ sessions: [Session]) -> [Session] {
-        sessions.filter(\.isPurchase).sorted { ($0.dealDate ?? .distantPast) > ($1.dealDate ?? .distantPast) }
+        newestFirst(sessions.filter(\.isPurchase))
+    }
+
+    /// Every conversation (paid, ended, live), newest first: B1 Recent and B7.
+    /// Listening sessions where no product was ever detected (started, then abandoned) are left out;
+    /// the active one is still reachable from B1's Active session card.
+    static func conversations(_ sessions: [Session]) -> [Session] {
+        newestFirst(sessions.filter { !($0.auto && !$0.detected) })
+    }
+
+    private static func newestFirst(_ sessions: [Session]) -> [Session] {
+        sessions.sorted { ($0.dealDate ?? .distantPast) > ($1.dealDate ?? .distantPast) }
     }
 
     static func totals(_ sessions: [Session]) -> PurchaseTotals {

@@ -403,17 +403,25 @@ export class ResearchRunner {
     await this.sleep(1800);
 
     const prices = listings.map((l) => l.price).sort((a, b) => a - b);
-    const low = prices[Math.floor(prices.length * 0.25)] ?? session.target_price;
-    const high = prices[Math.floor(prices.length * 0.75)] ?? session.asking_price;
+    const low = prices[Math.floor(prices.length * 0.25)] ?? session.target_price ?? null;
+    const high = prices[Math.floor(prices.length * 0.75)] ?? session.asking_price ?? null;
+    const money = (c: number | null) => (c != null ? formatCents(c) : "?");
     if (agent.id === "comps") {
-      agent.summary = `${listings.length} similar listings run ${formatCents(prices[0] ?? low)}–${formatCents(prices[prices.length - 1] ?? high)} (illustrative).`;
+      agent.summary = listings.length
+        ? `${listings.length} similar listings run ${money(prices[0] ?? low)}–${money(prices[prices.length - 1] ?? high)} (illustrative).`
+        : "No comparable listings in the demo data for this item.";
       agent.price_low = low; agent.price_high = high;
     } else if (agent.id === "issues") {
       agent.summary = session.listing?.condition_claims.length
         ? `Verify the listing's claims in person: ${session.listing.condition_claims.slice(0, 3).join(", ")}. Worn tires and drivetrain are the usual hidden costs.`
         : "Check wear items in person; hidden repair costs are your best leverage.";
     } else {
-      agent.summary = `Fair range about ${formatCents(low)}–${formatCents(high)}. Asking is ${formatCents(session.asking_price)}; open near ${formatCents(session.target_price)}.`;
+      const open = session.target_price ?? low;
+      agent.summary = [
+        low != null && high != null ? `Fair range about ${formatCents(low)}–${formatCents(high)}.` : "Not enough data for a fair range.",
+        session.asking_price != null ? `Asking is ${formatCents(session.asking_price)}.` : "",
+        open != null ? `Open near ${formatCents(open)}.` : "",
+      ].filter(Boolean).join(" ");
       agent.price_low = low; agent.price_high = high;
     }
     agent.status = "done";
@@ -445,8 +453,15 @@ export class ResearchRunner {
     const findings = research?.agents.filter((a) => a.summary).map((a) => `${a.title}: ${a.summary}`) ?? [];
     const transcript = events.slice(-8).map((e) => `${e.speaker}: ${e.text}`).join("\n");
     const prompt = [
-      `You coach a buyer negotiating in person for: ${itemDescription(session)}.`,
-      `Asking ${formatCents(session.asking_price)}, buyer target ${formatCents(session.target_price)}, walk-away max ${formatCents(session.max_budget)} (never reveal the max).`,
+      `You coach a buyer negotiating in person for: ${session.item.trim() ? itemDescription(session) : "an item not identified yet (infer it from the conversation)"}.`,
+      [
+        `Asking ${session.asking_price != null ? formatCents(session.asking_price) : "not heard yet"}.`,
+        session.target_price != null ? `Buyer target ${formatCents(session.target_price)}.` : "",
+        session.max_budget != null ? `Walk-away max ${formatCents(session.max_budget)} (never reveal the max).` : "",
+      ].filter(Boolean).join(" "),
+      session.target_price == null && session.max_budget == null
+        ? `The buyer set no target or budget: never invent one. When suggesting a number, base it on the market research fair range if there is one; otherwise ask questions instead of naming a price.`
+        : "",
       `Current offer on the table: ${session.current_offer != null ? formatCents(session.current_offer) : "none yet"}.`,
       findings.length ? `Market research so far:\n${findings.join("\n")}` : "",
       `Recent conversation:\n${transcript || "(nothing yet)"}`,
@@ -470,17 +485,20 @@ export class ResearchRunner {
 /** Template phrases for mock mode / model failure. */
 export function mockPhrases(session: Session, last: DealEvent | null, research: ResearchState | null): Suggestions["phrases"] {
   const offer = session.current_offer;
-  const target = session.target_price;
-  const range = research?.agents.find((a) => a.id === "comps" && a.price_low != null && a.price_high != null);
+  const range = research?.agents.find((a) => (a.id === "comps" || a.id === "price") && a.price_low != null && a.price_high != null);
+  // Never invent the buyer's budget: their own target, else the low end of the market range, else no number.
+  const target = session.target_price ?? range?.price_low ?? null;
   const out: Suggestions["phrases"] = [];
   if (last?.kind === "condition_check" && last.cue) {
     out.push({ text: `I noticed ${last.text.replace(/^Condition check:\s*/i, "").replace(/\.$/, "").toLowerCase()}. That's a cost I'd have to cover, so can we adjust the price?`, why: "Condition doesn't match" });
   }
   if (range && range.price_low != null && range.price_high != null) {
-    out.push({ text: `I've seen similar ones go for ${formatCents(range.price_low)} to ${formatCents(range.price_high)} around here. Would you do ${formatCents(target)}?`, why: "Anchor on comps" });
+    out.push({ text: `I've seen similar ones go for ${formatCents(range.price_low)} to ${formatCents(range.price_high)} around here. Would you do ${formatCents(target ?? range.price_low)}?`, why: "Anchor on comps" });
   }
-  if (offer != null && offer > target) {
+  if (offer != null && target != null && offer > target) {
     out.push({ text: `I appreciate that. ${formatCents(offer)} is still above my budget. I can do ${formatCents(target)} cash today and pick it up now.`, why: "Counter with certainty" });
+  } else if (offer != null && target == null) {
+    out.push({ text: `Is ${formatCents(offer)} your best price? What's the lowest you'd take if I pay right now?`, why: "Test their floor" });
   } else if (offer != null) {
     out.push({ text: `${formatCents(offer)} works for me if that's the total, with no extra fees added at the end.`, why: "Lock the total" });
   } else {

@@ -39,7 +39,7 @@ struct BuyerFlowView: View {
             .navigationDestination(for: BuyerRoute.self) { route in
                 switch route {
                 case .newNegotiation: NewNegotiationView()
-                case .history: PurchaseHistoryView()
+                case .history: PurchaseHistoryView(onResume: resume)
                 case .deal(let session): DealDetailView(session: session)
                 }
             }

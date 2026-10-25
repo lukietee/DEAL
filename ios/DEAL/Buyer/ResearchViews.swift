@@ -122,13 +122,17 @@ struct PhraseSuggestions: Codable, Sendable, Hashable {
 
 struct ResearchPanel: View {
     var research: ResearchState?
+    /// Listening session that hasn't detected the product yet: research hasn't started.
+    var waitingForProduct = false
     var onRerun: () -> Void
     @State private var showDetail = false
 
     var body: some View {
         SurfaceCard(padding: 16) {
             HStack(spacing: 8) {
-                if research?.isRunning ?? true {
+                if research == nil, waitingForProduct {
+                    Image(systemName: "hourglass").foregroundStyle(Palette.muted)
+                } else if research?.isRunning ?? true {
                     ProgressView().controlSize(.small)
                 } else {
                     Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.greenText)
@@ -170,6 +174,10 @@ struct ResearchPanel: View {
                     }
                     .transition(.opacity)
                 }
+            } else if waitingForProduct {
+                Text("Research starts once the product is detected.")
+                    .font(DealFont.caption).foregroundStyle(Palette.muted)
+                    .accessibilityIdentifier("researchWaiting")
             } else {
                 Text("Starting research agents…").font(DealFont.caption).foregroundStyle(Palette.muted)
             }

@@ -28,8 +28,13 @@ final class SessionStore {
     private var requestedScript = false
     private(set) var isListening = false
     private(set) var partialTranscript = ""
-    var micSpeaker: Speaker = .buyer
+    /// Listening sessions default to Auto (the backend decides who spoke); You / Seller force it.
+    var micSpeaker: MicSpeaker = .buyer
     private var transcriber: SpeechTranscriber?
+    /// Set by B1 "Start listening": B3 turns the mic on as soon as it appears (once).
+    var autoStartMic = false
+    /// UI tests pass this so the Simulator never shows the speech / mic permission prompts.
+    nonisolated static let noAutoMicLaunchArgument = "-DEALNoAutoMic"
 
     var syncDescription: String { sync.modeDescription }
 
@@ -53,6 +58,7 @@ final class SessionStore {
         self.api = api
         self.sync = sync
         self.glasses = glasses
+        self.micSpeaker = initial.session.auto ? .auto : .buyer
         pushGlasses()
     }
 
@@ -142,7 +148,7 @@ final class SessionStore {
         return result
     }
 
-    func postTranscriptLine(_ text: String, speaker: Speaker) async {
+    func postTranscriptLine(_ text: String, speaker: MicSpeaker) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         _ = await perform { try await api.postEvent(sessionID: session.id, speaker: speaker, text: trimmed) }
@@ -150,6 +156,15 @@ final class SessionStore {
 
     func fixTerm(_ term: Term, correction: TermCorrection) async {
         _ = await perform { try await api.fixTerm(sessionID: session.id, termID: term.id, correction: correction) }
+    }
+
+    /// B3 "End": stops the mic, ends the conversation on the backend and returns the session with
+    /// its `summary`. Sync keeps running so the summary sheet can still show fresh state.
+    func endConversation() async -> Session? {
+        stopMic()
+        guard let ended = await perform({ try await api.endSession(sessionID: session.id) }) else { return nil }
+        state.session = ended
+        return ended
     }
 
     /// B3 "Lock Deal": drafts the agreement from the transcript.
