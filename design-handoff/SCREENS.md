@@ -2,7 +2,11 @@
 
 DEAL is a negotiation copilot. The **buyer** wears Ray-Ban Meta Display glasses that show short live cues ("Redirect to total price") while they negotiate, for example buying a used car. When both sides agree, the agreement is **locked**. The **seller's** iPhone then becomes a Tap to Pay terminal that can only charge the agreed amount. If the seller tries to add a surprise fee, the buyer's phone blocks it.
 
-One SwiftUI iOS app, two modes: **Buyer** and **Seller**. The demo is a 2023 Honda Accord: asking $38,000, the buyer's target $34,500, deal closes at $34,600, and the seller then tries to add a $1,200 "protection package", which gets blocked.
+One SwiftUI iOS app, two modes: **Buyer** and **Seller**.
+
+**Flagship demo: a Facebook Marketplace meetup.** Two strangers haggle face to face over a used road bike listed at $650. The buyer imports the listing, DEAL coaches them, and a condition check catches that the "new tires last month" are actually worn ("ask $40 off"). The deal settles at $520. The seller then tries to add "$20 for gas" at the terminal, which gets blocked. After payment, **both phones** show "Payment verified, hand over the item", which kills fake "payment sent" screenshot scams. The marketplace screens are in [Marketplace meetup](#marketplace-meetup-flagship) below.
+
+**Secondary scenario: a used car.** A 2023 Honda Accord: asking $38,000, the buyer's target $34,500, deal closes at $34,600, and the seller then tries to add a $1,200 "protection package", which gets blocked. Most screenshots in the per-screen sections show this scenario.
 
 Screenshots are from the iPhone 18 Pro Simulator (iOS 27.1, light mode), captured from the current build. They're in [`screenshots/`](screenshots/).
 
@@ -58,7 +62,8 @@ For each screen, give Claude the screenshot plus that screen's section below, an
 ### B2. New Negotiation
 ![](screenshots/B2-new-negotiation.png)
 `ios/DEAL/Buyer/NewNegotiationView.swift`
-- Category picker: Car / Pawn Shop / Marketplace / Electronics / Other.
+- **Import listing** at the top: paste a Marketplace link (text field and paste button), or pick a listing screenshot. The result is a compact listing card (see M-B2 below).
+- Category picker: Car / Pawn Shop / Marketplace / Electronics / Other, with **Use demo values** (Marketplace bike) and **Car demo**.
 - Item name, asking price, target price, max budget.
 - Style: Polite / Firm / Aggressive.
 - **Comparable prices** card with 3–4 illustrative listings.
@@ -141,6 +146,65 @@ For each screen, give Claude the screenshot plus that screen's section below, an
 
 ---
 
+## Marketplace meetup (flagship)
+
+These are the same screens as above, in the states the Marketplace demo adds. Code for the shared pieces is in `ios/DEAL/Shared/MarketplaceComponents.swift`.
+
+### M-B2. Import listing
+![](screenshots/M-B2-import.png)
+`ios/DEAL/Buyer/NewNegotiationView.swift`
+- **Import listing:** link field, paste button, **Listing screenshot** (PhotosPicker) and **Import**.
+- **Listing card:** source (Facebook Marketplace), title, asking price ($650), location and seller name, then the seller's **condition claims** as chips: "like new", "new tires last month", "no scratches", "shifts perfectly". An ✕ removes the listing.
+- The import prefills Marketplace, the item, asking $650, target $520 and max $575.
+- The claims are what DEAL holds the seller to at the meetup, so they should read as "promises on record".
+
+### M-B3. Live session with listing claims
+![](screenshots/M-B3-live.png)
+`ios/DEAL/Buyer/LiveSessionView.swift`
+- Same as B3, plus a single scrolling line of **"Listing says"** chips under the header.
+- The toolbar has a camera icon, **Check condition**.
+
+### M-B3a. Check condition (sheet)
+![](screenshots/M-B3-condition-sheet.png)
+`ios/DEAL/Buyer/ConditionCheckView.swift`
+- Listing claims at the top.
+- **Take photo** (camera, device only), **Choose photo** (PhotosPicker), and a "What do you see?" text field. The Simulator shows **Use sample observation** instead of the camera.
+- **Check against listing**, then the result: one card per mismatch, "CONDITION MISMATCH · Listing: new tires last month · Seen: Tires are worn… · ask $40 off", plus the glasses cue.
+
+### M-B3b. Mismatch caught
+![](screenshots/M-B3-condition.png)
+- A compact orange discrepancy card is **pinned** between the current offer and the ON GLASSES card: "Listing: … · Seen: … · ask $40 off · +1 more". Tap it to reopen the sheet.
+- The contradicted claim chips turn red with a strikethrough.
+- The ON GLASSES card shows "Tires worn: ask $40 off" until the next coaching cue replaces it. In this screenshot the script has already moved on. The check appears in the transcript as a camera row, not as speech.
+- The buyer uses this as leverage, so the discount should be easy to read at a glance.
+
+### M-B5. Gas fee blocked
+![](screenshots/M-B5-gas-blocked.png)
+- Same as B5: "Charge blocked: $20 more than agreed", with the extra "gas fee" line highlighted.
+
+### M-B6. Payment verified (buyer)
+![](screenshots/M-B6-verified.png)
+`ios/DEAL/Buyer/ReceiptView.swift` + `VerifiedHandoffCard`
+- **The anti-scam moment.** A big pulsing green check, **"Payment verified"**, "Seller can hand over the item", the amount ($520.00) and the item.
+- Three facts: agreement fingerprint (`a3f9…c21`), paid time, and a live **"Verified Ns ago"** clock that ticks, so a screenshot can't pass for it.
+- "Confirmed by DEAL on both phones, so no 'payment sent' screenshots."
+- The regular receipt (summary, receipt card, Done) follows below.
+
+### M-S4. Terminal: $20 gas fee
+| State | Screenshot |
+|---|---|
+| Terminal at $520.00 | ![](screenshots/M-S4-terminal.png) |
+| Gas fee added → waiting for buyer ($540.00 requested) | ![](screenshots/M-S4-gas-waiting.png) |
+
+- **Add line item** is pre-filled with "gas fee", $20 in Marketplace sessions.
+
+### M-S5. Payment verified (seller)
+![](screenshots/M-S5-verified.png)
+- The same card on the seller's phone: **"Payment verified"** and **"Hand over the item"**.
+- The seller should hand over the item only when this screen is on their own phone. The design should make that rule obvious to someone who has never used DEAL.
+
+---
+
 ## Seller mode
 
 The seller never sees cues or the transcript, because the coaching is private to the buyer.
@@ -178,6 +242,7 @@ The seller never sees cues or the transcript, because the coaching is private to
 ### S5. Receipt
 ![](screenshots/S5-receipt.png)
 - Same payment confirmation as the buyer's.
+- Marketplace sessions lead with the verified handoff card (see M-S5).
 
 ---
 
