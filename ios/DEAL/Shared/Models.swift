@@ -447,16 +447,21 @@ struct SessionState: Codable, Sendable, Hashable {
     var topLevelListing: Listing?
     /// Tolerated if the backend persists condition checks (`condition_checks` / `discrepancies`).
     var serverDiscrepancies: [Discrepancy]
+    /// Live market research agents (backend `research`, see Research.swift).
+    var research: ResearchState?
+    /// Suggested things to say next (backend `suggestions`).
+    var suggestions: PhraseSuggestions?
 
     init(session: Session, events: [DealEvent] = [], agreement: Agreement? = nil,
          paymentRequests: [PaymentRequest] = [], receipt: Receipt? = nil, script: ScriptRun? = nil) {
         self.session = session; self.events = events; self.agreement = agreement
         self.paymentRequests = paymentRequests; self.receipt = receipt; self.script = script
         self.topLevelListing = nil; self.serverDiscrepancies = []
+        self.research = nil; self.suggestions = nil
     }
 
     enum CodingKeys: String, CodingKey {
-        case session, events, agreement, paymentRequests, receipt, script
+        case session, events, agreement, paymentRequests, receipt, script, research, suggestions
         case topLevelListing = "listing"
         case serverDiscrepancies = "discrepancies"
         case conditionChecks
@@ -470,6 +475,8 @@ struct SessionState: Codable, Sendable, Hashable {
         try c.encode(paymentRequests, forKey: .paymentRequests)
         try c.encodeIfPresent(receipt, forKey: .receipt)
         try c.encodeIfPresent(script, forKey: .script)
+        try c.encodeIfPresent(research, forKey: .research)
+        try c.encodeIfPresent(suggestions, forKey: .suggestions)
     }
 
     init(from decoder: Decoder) throws {
@@ -482,6 +489,8 @@ struct SessionState: Codable, Sendable, Hashable {
         script = try? c.decodeIfPresent(ScriptRun.self, forKey: .script)
         topLevelListing = try? c.decodeIfPresent(Listing.self, forKey: .topLevelListing)
         serverDiscrepancies = Self.decodeDiscrepancies(c)
+        research = try? c.decodeIfPresent(ResearchState.self, forKey: .research)
+        suggestions = try? c.decodeIfPresent(PhraseSuggestions.self, forKey: .suggestions)
     }
 
     /// `discrepancies: [...]`, or `condition_checks: [{discrepancies: [...]}]` / `[Discrepancy]`.

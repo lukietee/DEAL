@@ -1,10 +1,12 @@
 import cors from "@fastify/cors";
+import Anthropic from "@anthropic-ai/sdk";
 import Fastify, { type FastifyInstance } from "fastify";
 import { createAi, type Ai } from "./ai/index.js";
 import type { Config } from "./config.js";
 import { listScriptIds } from "./content.js";
 import { Deal, HttpError } from "./deal.js";
 import { createPayments, type Payments } from "./payments/index.js";
+import { ResearchRunner } from "./research.js";
 import { agreementRoutes } from "./routes/agreements.js";
 import { eventRoutes } from "./routes/events.js";
 import { listingRoutes } from "./routes/listings.js";
@@ -30,7 +32,14 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     (cfg.supabaseUrl && cfg.supabaseServiceRoleKey ? new SupabaseStore(cfg.supabaseUrl, cfg.supabaseServiceRoleKey) : new MemoryStore());
   const ai = deps.ai ?? createAi(cfg, app.log);
   const payments = deps.payments ?? createPayments(cfg.stripeSecretKey);
-  const deal = new Deal(store, ai, payments, cfg);
+  const research = new ResearchRunner({
+    mockMode: ai.kind !== "claude",
+    client: ai.kind === "claude" ? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 }) : null,
+    model: cfg.researchModel,
+    cueModel: cfg.cueModel,
+    log: app.log,
+  });
+  const deal = new Deal(store, ai, payments, cfg, research);
 
   app.setErrorHandler((err: unknown, _req, reply) => {
     if (err instanceof HttpError) {
@@ -48,7 +57,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     ai: ai.kind,
     store: store.kind,
     payments: payments.kind,
-    models: ai.kind === "claude" ? { cue: cfg.cueModel, agreement: cfg.agreementModel } : null,
+    models: ai.kind === "claude" ? { cue: cfg.cueModel, agreement: cfg.agreementModel, research: cfg.researchModel } : null,
     scripts: listScriptIds(),
     time: new Date().toISOString(),
   }));

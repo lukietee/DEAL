@@ -81,6 +81,11 @@ struct APIClient: Sendable {
                        body: PlayScriptBody(scriptId: scriptID, intervalMs: intervalMs))
     }
 
+    /// Re-run the live research agents. Progress arrives through `GET /sessions/:id` -> `research`.
+    func restartResearch(sessionID: String) async throws {
+        _ = try await raw("POST", "/sessions/\(sessionID.urlPathEscaped)/research", body: Optional<Empty>.none, expectSuccess: true)
+    }
+
     /// Response ("updated terms") is not needed: the next sync tick picks up the change.
     func fixTerm(sessionID: String, termID: String, correction: TermCorrection) async throws {
         _ = try await raw("PATCH", "/sessions/\(sessionID.urlPathEscaped)/terms",

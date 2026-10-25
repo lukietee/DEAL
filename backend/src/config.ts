@@ -27,6 +27,7 @@ export function loadConfig() {
     anthropicApiKey: secret("ANTHROPIC_API_KEY"),
     cueModel: process.env.CUE_MODEL?.trim() || "claude-haiku-5-5",
     agreementModel: process.env.AGREEMENT_MODEL?.trim() || "claude-sonnet-5-5",
+    researchModel: process.env.RESEARCH_MODEL?.trim() || "claude-opus-5-5", // live research agents (web search)
     supabaseUrl: secret("SUPABASE_URL"),
     supabaseServiceRoleKey: secret("SUPABASE_SERVICE_ROLE_KEY"),
     stripeSecretKey: secret("STRIPE_SECRET_KEY"),

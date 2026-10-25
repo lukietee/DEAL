@@ -118,6 +118,11 @@ final class SessionStore {
         if result != nil { requestedScript = true }
     }
 
+    /// B3 Research panel "Run again".
+    func restartResearch() async {
+        _ = await perform { try await api.restartResearch(sessionID: session.id) }
+    }
+
     /// B3 "Check condition". Errors are thrown back to the sheet instead of the session banner.
     func checkCondition(observation: String?, imageBase64: String?) async throws -> ConditionCheckResult {
         let text = observation?.trimmingCharacters(in: .whitespacesAndNewlines)

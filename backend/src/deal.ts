@@ -8,6 +8,7 @@ import { checkPaymentRequest, matchLineItem, sumLineItems } from "./mismatch.js"
 import { type ConditionCheck, type ConditionInput, type Discrepancy, type Listing, type ListingInput } from "./listing.js";
 import { formatCentsShort } from "./money.js";
 import type { Payments } from "./payments/index.js";
+import { ResearchRunner } from "./research.js";
 import type { Store } from "./store/index.js";
 import type {
   Agreement, CueExtraction, DealEvent, EventKind, Fee, LineItem, PaymentRequest, Receipt, Session, Speaker, Term,
@@ -59,6 +60,7 @@ export class Deal {
     public ai: Ai,
     public payments: Payments,
     private cfg: Pick<Config, "merchantName" | "displayTimeZone">,
+    public research: ResearchRunner = new ResearchRunner({ mockMode: true, client: null, model: "", cueModel: "", log: { warn: () => undefined } }),
   ) {}
 
   /** Serialise mutations per key (session id) so seq numbers and terms never race. */
@@ -105,7 +107,15 @@ export class Deal {
       created_at: t,
       updated_at: t,
     };
-    return this.store.insertSession(session);
+    const saved = await this.store.insertSession(session);
+    this.research.start(saved); // live market research agents (GET /sessions/:id -> research)
+    this.research.refreshSuggestions(saved, []); // opening lines before anyone speaks
+    return saved;
+  }
+
+  /** POST /sessions/:id/research: re-run the research agents. */
+  async restartResearch(id: string) {
+    return this.research.start(await this.mustSession(id));
   }
 
   async joinSession(code: string): Promise<Session> {
@@ -145,6 +155,8 @@ export class Deal {
       payment_requests,
       receipt,
       script: this.scriptRuns.get(id) ?? null,
+      research: this.research.research(id),
+      suggestions: this.research.suggestionsFor(id),
     };
   }
 
@@ -188,6 +200,8 @@ export class Deal {
         current_offer: extraction.current_offer ?? session.current_offer,
         current_offer_by: extraction.current_offer != null ? extraction.offer_by : session.current_offer_by,
       });
+      const updated = await this.store.getSession(sessionId);
+      if (updated) this.research.refreshSuggestions(updated, [...events, saved]);
       return saved;
     });
   }
@@ -277,6 +291,7 @@ export class Deal {
   stopAll() {
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
+    this.research.stopAll();
   }
 
   async correctTerm(sessionId: string, termId: string, correction: TermCorrection): Promise<Term[]> {

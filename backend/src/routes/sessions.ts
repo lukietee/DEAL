@@ -38,6 +38,11 @@ export function sessionRoutes(app: FastifyInstance, deal: Deal) {
     return { deleted: true };
   });
 
+  app.post<{ Params: IdParams }>("/sessions/:id/research", async (req, reply) => {
+    reply.code(202);
+    return deal.restartResearch(req.params.id);
+  });
+
   app.get<{ Params: IdParams }>("/sessions/:id/dispute-pack", async (req) => deal.disputePack(req.params.id));
 
   app.get<{ Params: { category: string } }>("/comparables/:category", async (req) => {
