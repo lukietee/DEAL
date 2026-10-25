@@ -42,87 +42,46 @@ struct NewNegotiationView: View {
     }
 
     var body: some View {
-        Form {
-            importSection
-
-            Section("Category") {
-                Picker("Category", selection: $category) {
-                    ForEach(DealCategory.allCases) { c in
-                        Label(c.displayName, systemImage: c.symbol).tag(c)
-                    }
-                }
-                .pickerStyle(.menu)
-                HStack {
-                    Button("Use demo values") { Task { await fillMarketplaceDemo() } }
-                    Spacer()
-                    Button { fillCarDemo() } label: { Label("Car demo", systemImage: "car.fill") }
-                }
-                .buttonStyle(.borderless)
-                .font(.footnote)
-            }
-
-            Section("What are you buying?") {
-                TextField("Item (e.g. used road bike)", text: $item)
-                moneyField("Asking price", text: $asking)
-                moneyField("Target price", text: $target)
-                moneyField("Maximum budget", text: $maxBudget)
-            }
-
-            Section("Style") {
-                Picker("Style", selection: $style) {
-                    ForEach(NegotiationStyle.allCases) { Text($0.displayName).tag($0) }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Section {
-                if loadingComparables {
-                    ProgressView()
-                } else if comparables.isEmpty {
-                    Text(comparablesError ?? "No comparables for this category.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                } else {
-                    ForEach(comparables.prefix(4)) { comp in
-                        HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(comp.title).font(.subheadline)
-                                if let source = comp.source {
-                                    Text(source).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                            Text(Money.format(comp.price)).font(.subheadline.monospacedDigit().weight(.semibold))
-                        }
-                    }
-                }
-            } header: {
-                Text("Comparable prices")
-            } footer: {
-                Text("Illustrative listings for demo purposes.")
-            }
-
-            Section {
-                if let error {
-                    Text(error).font(.footnote).foregroundStyle(.red)
-                }
-                Button {
-                    Task { await start() }
-                } label: {
-                    HStack {
-                        if isStarting { ProgressView().tint(.white) }
-                        Text("Start Session")
-                    }
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(validationMessage != nil || isStarting)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                if let msg = validationMessage {
-                    Text(msg).font(.caption).foregroundStyle(.secondary)
-                }
+        ScrollView {
+            HeroScaffold(heroBottomPadding: 76) {
+                Text("New negotiation")
+                    .font(DealFont.jakarta(34, .extrabold))
+                    .kerning(-1)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
+            } content: {
+                itemField
+                    .padding(.horizontal, 8)
+                    .padding(.top, -29)
+                importSection
+                categorySection
+                numbersSection
+                styleSection
+                comparablesSection
             }
         }
+        .scrollDismissesKeyboard(.interactively)
+        .background(alignment: .top) {
+            ZStack(alignment: .top) {
+                Palette.background
+                Palette.sand.frame(height: 320)
+            }
+            .ignoresSafeArea()
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { startBar }
+        .font(DealFont.body)
+        .foregroundStyle(Palette.ink)
+        .tint(Palette.ink)
         .navigationTitle("New Negotiation")
+        .dealInlineTitle()
+        .toolbar {
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) }
+            ToolbarItemGroup(placement: .dealTrailing) {
+                Button("Car demo") { fillCarDemo() }
+                Button("Use demo values") { Task { await fillMarketplaceDemo() } }
+            }
+        }
+        .toolbarBackground(Palette.sand, for: .navigationBar)
         .task(id: category) { await loadComparables() }
         .task { if item.isEmpty && listing == nil { await fillMarketplaceDemo() } }
         .onChange(of: photoItem) { _, newItem in
@@ -131,54 +90,220 @@ struct NewNegotiationView: View {
         }
     }
 
+    // MARK: Sections
+
+    /// The floating "What are you buying?" field that overlaps the hero's bottom edge.
+    private var itemField: some View {
+        TextField("What are you buying?", text: $item)
+            .font(DealFont.jakarta(17, .bold))
+            .padding(.horizontal, 22)
+            .frame(height: 58)
+            .background(Capsule().fill(Palette.surface).shadow(color: .black.opacity(0.12), radius: 9, y: 6))
+            .accessibilityLabel("What are you buying?")
+    }
+
+    private var categorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Category")
+            FlowLayout(spacing: 8) {
+                ForEach(DealCategory.allCases) { c in
+                    let selected = c == category
+                    Button { category = c } label: {
+                        Text(c.displayName)
+                            .font(DealFont.jakarta(15, selected ? .bold : .semibold))
+                            .padding(.horizontal, 18)
+                            .frame(height: 44)
+                            .background(Capsule().fill(selected ? Palette.sand : Self.chipIdle))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    private var numbersSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Your numbers")
+            HStack(spacing: 10) {
+                moneyTile("Asking", a11y: "Asking price", text: $asking, fill: Palette.surface)
+                moneyTile("Target", a11y: "Target price", text: $target, fill: Palette.sand)
+                moneyTile("Max", a11y: "Maximum budget", text: $maxBudget, fill: Palette.surface)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                if let a = askingCents, let t = targetCents, let m = maxCents, t < a, m >= t {
+                    RangeMeter(asking: a, target: t, maxBudget: m)
+                }
+                Text("Cues stay green at or below target, turn yellow up to your max, red above it.")
+                    .font(DealFont.caption)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Palette.surface))
+        }
+    }
+
+    private var styleSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Style")
+            HStack(spacing: 4) {
+                ForEach(NegotiationStyle.allCases) { s in
+                    let selected = s == style
+                    Button { style = s } label: {
+                        Text(s.displayName)
+                            .font(DealFont.jakarta(15, selected ? .bold : .semibold))
+                            .foregroundStyle(selected ? Palette.ink : Palette.muted)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(Capsule().fill(selected ? Palette.sand : .clear))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            .padding(5)
+            .background(Capsule().fill(Palette.surface))
+        }
+    }
+
+    private var comparablesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Comparable prices") {
+                Text("Illustrative").font(DealFont.jakarta(12)).foregroundStyle(Palette.muted)
+            }
+            VStack(spacing: 0) {
+                if loadingComparables {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 16)
+                } else if comparables.isEmpty {
+                    Text(comparablesError ?? "No comparables for this category.")
+                        .font(DealFont.caption).foregroundStyle(Palette.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 14)
+                } else {
+                    let shown = Array(comparables.prefix(4))
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, comp in
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(comp.title).font(DealFont.jakarta(15, .bold))
+                                if let source = comp.source {
+                                    Text(source).font(DealFont.caption).foregroundStyle(Palette.muted)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Text(Money.format(comp.price)).font(DealFont.jakarta(16, .extrabold))
+                        }
+                        .padding(.vertical, 13)
+                        if index < shown.count - 1 { Rectangle().fill(Palette.divider).frame(height: 1) }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+            Text("Illustrative listings for demo purposes.")
+                .font(DealFont.jakarta(12)).foregroundStyle(Palette.muted)
+                .padding(.horizontal, 6)
+        }
+    }
+
+    private var startBar: some View {
+        VStack(spacing: 8) {
+            if let error {
+                Text(error).font(DealFont.caption).foregroundStyle(Palette.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button {
+                Task { await start() }
+            } label: {
+                HStack(spacing: 8) {
+                    if isStarting { ProgressView().tint(Palette.ink) }
+                    Text("Start Session")
+                }
+            }
+            .buttonStyle(PillButtonStyle(kind: .sand, height: 58))
+            .disabled(validationMessage != nil || isStarting)
+            .opacity(validationMessage != nil ? 0.55 : 1)
+            if let msg = validationMessage {
+                Text(msg).font(DealFont.jakarta(12)).foregroundStyle(Palette.muted)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .background(
+            UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
+                .fill(Palette.surface)
+                .ignoresSafeArea(edges: .bottom)
+                .shadow(color: .black.opacity(0.05), radius: 10, y: -2)
+        )
+    }
+
     // MARK: Import listing
 
     private var importSection: some View {
-        Section {
-            HStack(spacing: 8) {
-                TextField("Paste a Marketplace link", text: $listingLink)
-                    .dealURLEntry()
-                    .onSubmit { Task { await importLink() } }
-                    .accessibilityIdentifier("listingLink")
-                PasteButton(payloadType: String.self) { strings in
-                    guard let first = strings.first else { return }
-                    Task { @MainActor in
-                        listingLink = first.trimmingCharacters(in: .whitespacesAndNewlines)
-                        await importLink()
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Import listing")
+            SurfaceCard(padding: 14) {
+                HStack(spacing: 8) {
+                    Image(systemName: "link").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.muted)
+                    TextField("Paste a Marketplace link", text: $listingLink)
+                        .font(DealFont.jakarta(15, .semibold))
+                        .dealURLEntry()
+                        .onSubmit { Task { await importLink() } }
+                        .accessibilityIdentifier("listingLink")
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let first = strings.first else { return }
+                        Task { @MainActor in
+                            listingLink = first.trimmingCharacters(in: .whitespacesAndNewlines)
+                            await importLink()
+                        }
                     }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.capsule)
+                    .tint(Palette.sand)
                 }
-                .labelStyle(.iconOnly)
-                .buttonBorderShape(.capsule)
-            }
-            HStack {
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Label("Listing screenshot", systemImage: "photo.on.rectangle")
+                .padding(.leading, 16)
+                .padding(.trailing, 5)
+                .frame(height: 50)
+                .background(Capsule().fill(Palette.surfaceWarm))
+
+                HStack(spacing: 8) {
+                    PhotosPicker(selection: $photoItem, matching: .images) {
+                        Label("Listing screenshot", systemImage: "photo.on.rectangle")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .sand, height: 44, fullWidth: false))
+                    Spacer(minLength: 0)
+                    Button {
+                        Task { await importLink() }
+                    } label: {
+                        if isImporting { ProgressView().tint(.white) } else { Text("Import") }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ink, height: 44, fullWidth: false))
+                    .disabled(listingLink.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
+                    .opacity(listingLink.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1)
                 }
-                Spacer()
-                Button {
-                    Task { await importLink() }
-                } label: {
-                    if isImporting { ProgressView() } else { Text("Import") }
+                .padding(.top, 2)
+
+                if isImporting {
+                    Label("Reading listing…", systemImage: "text.viewfinder")
+                        .font(DealFont.caption).foregroundStyle(Palette.muted)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(listingLink.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
+                if let importError {
+                    Text(importError).font(DealFont.caption).foregroundStyle(Palette.red)
+                }
+                if let listing {
+                    ListingCard(listing: listing, note: listingNote) { clearListing() }
+                        .padding(.top, 4)
+                }
             }
-            .buttonStyle(.borderless)
-            if isImporting {
-                Label("Reading listing…", systemImage: "text.viewfinder")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            if let importError {
-                Text(importError).font(.footnote).foregroundStyle(.red)
-            }
-            if let listing {
-                ListingCard(listing: listing, note: listingNote) { clearListing() }
-            }
-        } header: {
-            Text("Import listing")
-        } footer: {
             Text("Paste a Facebook Marketplace link or pick a screenshot. DEAL reads the price and what the seller claims about condition, then checks those claims at the meetup.")
+                .font(DealFont.jakarta(12)).foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
         }
     }
 
@@ -250,16 +375,30 @@ struct NewNegotiationView: View {
         isImporting = false
     }
 
-    private func moneyField(_ title: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text("$").foregroundStyle(.secondary)
-            TextField("0", text: text)
-                .multilineTextAlignment(.trailing)
-                .dealKeyboard(.decimal)
-                .frame(maxWidth: 140)
+    private static let chipIdle = Color(hex: 0xDADADA)
+
+    /// B2 number tile: big centered amount over a small caps label.
+    private func moneyTile(_ title: String, a11y: String, text: Binding<String>, fill: Color) -> some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 1) {
+                Text("$").foregroundStyle(text.wrappedValue.isEmpty ? Palette.faint : Palette.ink)
+                TextField("0", text: text)
+                    .dealKeyboard(.decimal)
+                    .fixedSize()
+                    .accessibilityLabel(a11y)
+            }
+            .font(DealFont.jakarta(22, .extrabold))
+            .kerning(-0.4)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .padding(.horizontal, 8)
+            Text(title.uppercased())
+                .font(DealFont.jakarta(11, .bold))
+                .kerning(1.1)
+                .foregroundStyle(fill == Palette.sand ? Palette.mutedWarm : Palette.muted)
         }
+        .frame(maxWidth: .infinity, minHeight: 104)
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(fill))
     }
 
     /// "Use demo values": the flagship Marketplace bike, through a canned import of the demo link.
@@ -324,5 +463,69 @@ struct NewNegotiationView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+/// B2 "Your numbers" meter: low end … target (green) … max (red) … asking, on one track.
+private struct RangeMeter: View {
+    var asking: Int
+    var target: Int
+    var maxBudget: Int
+
+    private static let filled = Color(hex: 0x8C8478)
+    private static let track = Color(hex: 0xE0E0E0)
+    private static let dangerDot = Color(hex: 0xD93025)
+
+    var body: some View {
+        let low = max(0, target - max(asking - target, 1))
+        let span = Double(max(asking - low, 1))
+        let tPos = min(max(Double(target - low) / span, 0), 1)
+        let mPos = min(max(Double(maxBudget - low) / span, 0), 1)
+        VStack(spacing: 10) {
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Self.track)
+                    Rectangle().fill(Palette.faint)
+                        .frame(width: max(0, w * (mPos - tPos)))
+                        .offset(x: w * tPos)
+                    UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 5)
+                        .fill(Self.filled)
+                        .frame(width: w * tPos)
+                }
+            }
+            .frame(height: 10)
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .topLeading) {
+                    label(Self.short(low), color: Palette.muted).position(x: 18, y: 8)
+                    label(Self.short(asking), color: Palette.muted).position(x: w - 18, y: 8)
+                    label(Self.short(target), dot: Palette.greenText).position(x: w * tPos, y: 8)
+                    label(Self.short(maxBudget), dot: Self.dangerDot).position(x: min(w * mPos, w - 70), y: 8)
+                }
+            }
+            .frame(height: 16)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Target \(Money.format(target)), max \(Money.format(maxBudget)), asking \(Money.format(asking))")
+    }
+
+    private func label(_ text: String, color: Color = Palette.ink, dot: Color? = nil) -> some View {
+        HStack(spacing: 4) {
+            if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
+            Text(text)
+        }
+        .font(DealFont.jakarta(12, .semibold))
+        .foregroundStyle(color)
+        .fixedSize()
+    }
+
+    /// `$34.5k`, `$31k`, `$650`.
+    static func short(_ cents: Int) -> String {
+        let dollars = Double(cents) / 100
+        guard dollars >= 1000 else { return Money.format(cents) }
+        let k = dollars / 1000
+        let rounded = (k * 10).rounded() / 10
+        return rounded == rounded.rounded() ? "$\(Int(rounded))k" : String(format: "$%.1fk", rounded)
     }
 }

@@ -5,19 +5,20 @@ import CoreImage.CIFilterBuiltins
 // MARK: - Theme
 
 enum Theme {
-    static let accent = Color(red: 0.10, green: 0.32, blue: 0.85)   // Visa-ish blue
-    static let gold = Color(red: 0.97, green: 0.71, blue: 0.0)
-    static let cardBackground = Color.secondary.opacity(0.10)
-    static let cornerRadius: CGFloat = 14
+    // Mapped onto the redesign palette (DesignSystem.swift) so older call sites follow it.
+    static let accent = Palette.ink
+    static let gold = Palette.amber
+    static let cardBackground = Palette.surface
+    static let cornerRadius: CGFloat = 28
 }
 
 extension StatusColor {
     var color: Color {
         switch self {
-        case .green: .green
-        case .yellow: .yellow
-        case .red: .red
-        case .unknown: .gray
+        case .green: Palette.greenText
+        case .yellow: Palette.amber
+        case .red: Palette.red
+        case .unknown: Palette.faint
         }
     }
 
@@ -42,13 +43,14 @@ struct Card<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             if let title {
                 Text(title.uppercased())
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(tint ?? .secondary)
+                    .font(DealFont.eyebrow)
+                    .kerning(1.2)
+                    .foregroundStyle(tint ?? Palette.muted)
             }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
+        .padding(18)
         .background(
             RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
                 .fill(tint?.opacity(0.10) ?? Theme.cardBackground)
@@ -87,10 +89,9 @@ struct PrimaryButtonStyle: ButtonStyle {
     var tint: Color = Theme.accent
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.headline)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(tint))
+            .font(DealFont.jakarta(17, .bold))
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(Capsule().fill(tint))
             .foregroundStyle(.white)
             .opacity(configuration.isPressed ? 0.8 : 1)
     }
@@ -112,29 +113,94 @@ struct ErrorBanner: View {
     }
 }
 
-/// Offer vs target bar ("[██████████░░░] near target").
+/// Offer vs target meter: track from asking (left) to target (right), filled up to the current
+/// offer with a status-colored knob, a tick at the max budget, and "$100 over target" on the right.
 struct OfferProgressBar: View {
     var asking: Int
     var target: Int
     var maxBudget: Int
     var offer: Int?
 
+    private static let filled = Color(hex: 0x8C8478)
+    private static let track = Color(hex: 0xE0E0E0)
+
     var body: some View {
         let progress = OfferMath.progress(asking: asking, target: target, offer: offer) ?? 0
-        let label = OfferMath.label(asking: asking, target: target, maxBudget: maxBudget, offer: offer)
         let status = OfferMath.status(target: target, maxBudget: maxBudget, offer: offer)
-        VStack(alignment: .leading, spacing: 4) {
+        let maxPos = OfferMath.progress(asking: asking, target: target, offer: maxBudget)
+        VStack(alignment: .leading, spacing: 8) {
             GeometryReader { geo in
+                let w = geo.size.width
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.secondary.opacity(0.2))
-                    Capsule().fill(status.color.gradient)
-                        .frame(width: max(8, geo.size.width * progress))
-                        .animation(.spring(duration: 0.4), value: progress)
+                    Capsule().fill(Self.track)
+                    Capsule().fill(Self.filled)
+                        .frame(width: offer == nil ? 0 : max(8, w * progress))
+                    if maxBudget > 0, let maxPos, maxPos > 0, maxPos < 1 {
+                        Rectangle().fill(Palette.surface).frame(width: 2, height: 14)
+                            .offset(x: w * maxPos - 1)
+                    }
+                    if offer != nil {
+                        Circle().fill(status.dotColor)
+                            .frame(width: 14, height: 14)
+                            .overlay(Circle().strokeBorder(Palette.surface, lineWidth: 2))
+                            .offset(x: min(max(w * progress - 7, -2), w - 12))
+                    }
                 }
+                .animation(.spring(duration: 0.4), value: progress)
             }
-            .frame(height: 10)
-            Text(label.rawValue).font(.caption).foregroundStyle(.secondary)
+            .frame(height: 8)
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .topLeading) {
+                    Text("Ask \(CompactMoney.short(asking))")
+                    if maxBudget > 0, let maxPos, maxPos > 0.22, maxPos < 0.62 {
+                        Text("Max \(CompactMoney.short(maxBudget))")
+                            .fixedSize()
+                            .frame(width: 90)
+                            .offset(x: w * maxPos - 45)
+                    }
+                    Text(meterLabel)
+                        .foregroundStyle(Palette.ink)
+                        .frame(width: w, alignment: .trailing)
+                }
+                .font(DealFont.jakarta(11, .semibold))
+                .foregroundStyle(Palette.muted)
+                .lineLimit(1)
+            }
+            .frame(height: 14)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(OfferMath.label(asking: asking, target: target, maxBudget: maxBudget, offer: offer).rawValue)
+    }
+
+    /// "$100 over target", "$400 under target", "At target", or the progress label without an offer.
+    private var meterLabel: String {
+        guard let offer else { return OfferProgressLabel.noOffer.rawValue.capitalizedFirst }
+        let diff = offer - target
+        if diff == 0 { return "At target" }
+        return diff > 0 ? "\(Money.format(diff)) over target" : "\(Money.format(-diff)) under target"
+    }
+}
+
+extension StatusColor {
+    /// Bright status dot used on the sand hero and meters (the design's #3DDC84 / amber / red).
+    var dotColor: Color {
+        switch self {
+        case .green: Palette.green
+        case .yellow: Palette.amber
+        case .red: Palette.liveDot
+        case .unknown: Palette.faint
+        }
+    }
+}
+
+/// `$34.5k`, `$38k`, `$650`.
+enum CompactMoney {
+    static func short(_ cents: Int) -> String {
+        let dollars = Double(cents) / 100
+        guard dollars >= 1000 else { return Money.format(cents) }
+        let k = ((dollars / 1000) * 10).rounded() / 10
+        return k == k.rounded() ? "$\(Int(k))k" : String(format: "$%.1fk", k)
     }
 }
 
@@ -161,24 +227,57 @@ struct QRCodeView: View {
     }
 }
 
-/// Join code + QR shown to the buyer after Start Session (B2 -> B3).
+/// Join code + QR shown to the buyer after Start Session (B2 -> B3), as the B3a sheet:
+/// status chip + Done, "Seller joins with", QR on a white tile, the code in sand tiles.
 struct JoinCodeCard: View {
     var code: String
+    /// No conversation yet: show "Waiting for seller" (amber) instead of "Live".
+    var waiting = true
+    var onDone: (() -> Void)? = nil
+
     var body: some View {
-        VStack(spacing: 14) {
-            Text("Seller joins with").font(.subheadline).foregroundStyle(.secondary)
+        VStack(spacing: 18) {
+            if let onDone {
+                HStack {
+                    Chip(text: waiting ? "Waiting for seller" : "Live",
+                         dot: waiting ? Palette.amber : Palette.liveDot,
+                         fill: Palette.surface)
+                        .foregroundStyle(Palette.inkSoft)
+                    Spacer()
+                    Button("Done", action: onDone)
+                        .buttonStyle(PillButtonStyle(kind: .sand, height: 44, fullWidth: false))
+                }
+            }
+            Text("Seller joins with")
+                .font(DealFont.jakarta(28, .extrabold))
+                .kerning(-0.8)
             QRCodeView(payload: JoinCode.qrPayload(code))
                 .frame(width: 200, height: 200)
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 16).fill(.white))
-            Text(code)
-                .font(.system(size: 40, weight: .bold, design: .monospaced))
-                .kerning(6)
-                .textSelection(.enabled)
-            Text("Seller: open DEAL → I'm Selling → scan or type this code.")
-                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .padding(22)
+                .background(RoundedRectangle(cornerRadius: 32, style: .continuous).fill(Palette.surface))
+            HStack(spacing: 6) {
+                ForEach(Array(code.enumerated()), id: \.offset) { _, ch in
+                    Text(String(ch))
+                        .font(DealFont.jakarta(30, .extrabold))
+                        .frame(width: 48, height: 60)
+                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.sand))
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(code)
+            (Text("Seller: open DEAL → ") + Text("I'm Selling").foregroundStyle(Palette.ink).fontWeight(.bold)
+             + Text(" → scan or type this code."))
+                .font(DealFont.jakarta(14))
+                .foregroundStyle(Palette.muted)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
         }
-        .padding()
+        .foregroundStyle(Palette.ink)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 20)
     }
 }
 
@@ -213,40 +312,60 @@ struct TranscriptLineView: View {
     var compact = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(event.speaker.displayName + ":")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(event.speaker == .buyer ? Theme.accent : .orange)
-                .frame(width: 52, alignment: .leading)
+        let isBuyer = event.speaker == .buyer
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(event.speaker.displayName)
+                .font(DealFont.jakarta(14, .extrabold))
+                .foregroundStyle(isBuyer ? Palette.ink : Palette.muted)
+                .frame(width: 50, alignment: .leading)
             Text(event.text)
-                .font(.subheadline)
+                .font(DealFont.jakarta(14))
+                .foregroundStyle(isBuyer ? Palette.ink : Palette.inkSoft)
+                .lineSpacing(3)
                 .lineLimit(compact ? 2 : nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if !compact, let ts = event.timestamp {
-                Text(TimeFormat.clock(ts)).font(.caption2).foregroundStyle(.secondary)
+                Text(TimeFormat.clock(ts)).font(DealFont.jakarta(11)).foregroundStyle(Palette.muted)
             }
         }
     }
 }
 
-/// The ON GLASSES card. Mirrors exactly what the `GlassesDisplay` is showing.
+/// The ON GLASSES cue as it sits on the B3 sand hero: "● GOOD · ON GLASSES" over the big cue.
+/// Mirrors exactly what the `GlassesDisplay` is showing.
 struct GlassesCueCard: View {
     var cue: GlassesCue?
     var displayName: String
+    var compact = false
 
     var body: some View {
-        Card(title: "On glasses · \(displayName)", tint: cue?.status.color ?? .gray) {
-            if let cue {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    StatusDot(color: cue.status.color, size: 12)
-                    Text(cue.text).font(.title3.weight(.semibold))
-                }
-                if let detail = cue.detail, !detail.isEmpty {
-                    Text(detail).font(.headline.monospacedDigit()).foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Waiting for the conversation…").foregroundStyle(.secondary)
+        let word = cue.map { $0.isAlert ? "ALERT" : $0.status.label.uppercased() } ?? "STANDBY"
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle().fill(cue?.status.dotColor ?? Palette.faint).frame(width: 10, height: 10)
+                Text("\(word) · ON GLASSES")
+                    .font(DealFont.jakarta(11, .extrabold))
+                    .kerning(1.5)
+                    .foregroundStyle(Palette.mutedWarm)
+            }
+            Text(cue?.text ?? "Waiting for the conversation…")
+                .font(DealFont.jakarta(compact ? 26 : 34, .extrabold))
+                .kerning(compact ? -0.6 : -1)
+                .foregroundStyle(cue == nil ? Palette.mutedWarm : Palette.ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.6)
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail = cue?.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(DealFont.jakarta(15, .semibold))
+                    .foregroundStyle(Palette.mutedWarm)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("On \(displayName)")
     }
 }

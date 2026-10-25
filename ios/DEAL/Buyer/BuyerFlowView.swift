@@ -32,14 +32,8 @@ struct BuyerFlowView: View {
                             }
                         }
                 } else {
+                    // B1 draws its own Exit button in the sand hero.
                     BuyerHomeView(path: $path, onResume: resume)
-                        .toolbar {
-                            ToolbarItem(placement: .dealLeading) {
-                                Button { model.exitToModePicker() } label: {
-                                    Label("Exit", systemImage: "chevron.backward")
-                                }
-                            }
-                        }
                 }
             }
             .navigationDestination(for: BuyerRoute.self) { route in
@@ -52,6 +46,7 @@ struct BuyerFlowView: View {
         }
         // A new session (B2 Start Session, or resuming one from the backend) or the end of one
         // (B6 Done) resets the stack so the root shows the right screen.
+        .tint(Palette.ink)
         .onChange(of: model.activeStore?.session.id) {
             path = []
             showHome = false

@@ -13,11 +13,20 @@ struct QRScannerSheet: View {
                 #else
                 Text("Camera scanning is only available on iPhone.").padding()
                 #endif
-                RoundedRectangle(cornerRadius: 20)
-                    .strokeBorder(.white.opacity(0.8), lineWidth: 3)
-                    .frame(width: 240, height: 240)
-                    .allowsHitTesting(false)
+                VStack(spacing: 28) {
+                    ViewfinderCorners(radius: 24)
+                        .stroke(.white, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                        .frame(width: 240, height: 240)
+                    Text("Point at the QR code on the buyer's phone")
+                        .font(DealFont.jakarta(15, .bold))
+                        .foregroundStyle(Palette.ink)
+                        .padding(.horizontal, 18)
+                        .frame(height: 44)
+                        .background(Capsule().fill(Palette.surface))
+                }
+                .allowsHitTesting(false)
             }
+            .background(Palette.dark.ignoresSafeArea())
             .navigationTitle("Scan join code")
             .dealInlineTitle()
             .toolbar {

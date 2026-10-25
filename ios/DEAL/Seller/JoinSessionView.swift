@@ -9,42 +9,52 @@ struct JoinSessionView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: "qrcode.viewfinder").font(.system(size: 64)).foregroundStyle(.orange)
-            Text("Join the buyer's session").font(.title2.weight(.bold))
-            Text("Scan the QR code on the buyer's phone, or type the join code.")
-                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        ScrollView {
+            HeroScaffold(heroBottomPadding: 80) {
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack {
+                        SellerExitButton(size: 48)
+                        Spacer()
+                        Chip(text: "Seller", eyebrow: true)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Join the buyer's\nsession")
+                            .font(DealFont.title)
+                            .kerning(-1.1)
+                            .lineSpacing(-2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Scan the QR code on the buyer's phone, or type the join code.")
+                            .font(DealFont.jakarta(15))
+                            .lineSpacing(3)
+                            .foregroundStyle(Palette.mutedWarm)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } content: {
+                codeField
+                    .padding(.top, -32)
+                    .padding(.trailing, 20)
 
-            Button {
-                showScanner = true
-            } label: {
-                Label("Scan QR code", systemImage: "camera.viewfinder")
-            }
-            .buttonStyle(PrimaryButtonStyle(tint: .orange))
+                if isJoining {
+                    ProgressView().frame(maxWidth: .infinity)
+                }
+                if let error {
+                    Text(error)
+                        .font(DealFont.caption)
+                        .foregroundStyle(Palette.red)
+                        .multilineTextAlignment(.leading)
+                        .padding(.horizontal, 8)
+                }
 
-            HStack {
-                TextField("Join code", text: $code)
-                    .font(.title2.monospaced())
-                    .multilineTextAlignment(.center)
-                    .dealCodeEntry()
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await join(code) } }
-                Button("Join") { Task { await join(code) } }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .disabled(JoinCode.parse(code) == nil || isJoining)
+                SectionHeader(title: "Or scan it")
+                    .padding(.top, 8)
+                scanCard
             }
-
-            if isJoining { ProgressView() }
-            if let error {
-                Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
-            }
-            Spacer()
         }
-        .padding(24)
-        .navigationTitle("Seller")
-        .dealInlineTitle()
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
+        .background(alignment: .top) { Palette.sand.frame(height: 200).ignoresSafeArea(edges: .top) }
+        .dealPage()
         .sheet(isPresented: $showScanner) {
             QRScannerSheet { scanned in
                 showScanner = false
@@ -54,6 +64,54 @@ struct JoinSessionView: View {
                 }
             }
         }
+    }
+
+    private var codeField: some View {
+        HStack(spacing: 8) {
+            TextField("Join code", text: $code)
+                .font(DealFont.mono(26, .semibold))
+                .kerning(7)
+                .dealCodeEntry()
+                .onSubmit { Task { await join(code) } }
+                .accessibilityIdentifier("Join code")
+            Button("Join") { Task { await join(code) } }
+                .buttonStyle(PillButtonStyle(kind: .sand, height: 50, fullWidth: false))
+                .disabled(JoinCode.parse(code) == nil || isJoining)
+                .opacity(JoinCode.parse(code) == nil || isJoining ? 0.5 : 1)
+        }
+        .padding(.leading, 24)
+        .padding(.trailing, 7)
+        .frame(height: 64)
+        .background(Capsule().fill(Palette.surface).shadow(color: .black.opacity(0.12), radius: 9, y: 6))
+    }
+
+    private var scanCard: some View {
+        Button { showScanner = true } label: {
+            VStack(spacing: 22) {
+                ZStack {
+                    ViewfinderCorners()
+                        .stroke(Palette.ink, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                        .frame(width: 140, height: 140)
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 50, weight: .regular))
+                }
+                .accessibilityHidden(true)
+                HStack(spacing: 10) {
+                    Image(systemName: "camera.fill").font(.system(size: 16, weight: .semibold))
+                    Text("Scan QR code")
+                }
+                .font(DealFont.jakarta(16, .bold))
+                .padding(.horizontal, 26)
+                .frame(height: 52)
+                .background(Capsule().fill(Palette.sand))
+            }
+            .foregroundStyle(Palette.ink)
+            .frame(maxWidth: .infinity, minHeight: 280)
+            .background(RoundedRectangle(cornerRadius: 32, style: .continuous).fill(Palette.surface))
+            .contentShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scan QR code")
     }
 
     private func join(_ raw: String) async {
@@ -67,5 +125,38 @@ struct JoinSessionView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+/// Four rounded viewfinder corners (the S1 scan target).
+struct ViewfinderCorners: Shape {
+    var length: CGFloat = 0.26
+    var radius: CGFloat = 18
+
+    func path(in rect: CGRect) -> Path {
+        let l = min(rect.width, rect.height) * length
+        let r = radius
+        var p = Path()
+        // top-left
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY + l))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        p.addQuadCurve(to: CGPoint(x: rect.minX + r, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX + l, y: rect.minY))
+        // top-right
+        p.move(to: CGPoint(x: rect.maxX - l, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + r), control: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + l))
+        // bottom-right
+        p.move(to: CGPoint(x: rect.maxX, y: rect.maxY - l))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - l, y: rect.maxY))
+        // bottom-left
+        p.move(to: CGPoint(x: rect.minX + l, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r), control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - l))
+        return p
     }
 }

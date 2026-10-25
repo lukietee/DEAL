@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Full-screen glanceable cue (phone fallback for the glasses, and the projector mirror):
 /// 3–6 word cue, status color, current offer vs target. Tap anywhere to dismiss.
+/// Styled as B3b in the redesign: sand page, status chip, huge cue, OFFER / TARGET tiles.
 struct TeleprompterView: View {
     var display: PhoneTeleprompterDisplay
     @Environment(\.dismiss) private var dismiss
@@ -9,61 +10,62 @@ struct TeleprompterView: View {
 
     var body: some View {
         let cue = display.currentCue
-        let color = cue?.status.color ?? .gray
+        let dot = cue?.status.dotColor ?? Palette.faint
         ZStack {
-            Color.black.ignoresSafeArea()
-            color.opacity(flash ? 0.45 : 0.18).ignoresSafeArea()
+            Palette.sand.ignoresSafeArea()
+            dot.opacity(flash ? 0.35 : 0).ignoresSafeArea()
 
-            VStack(spacing: 28) {
-                HStack {
-                    Circle().fill(color).frame(width: 22, height: 22)
-                        .shadow(color: color, radius: 10)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    Circle().fill(dot).frame(width: 16, height: 16)
                     Text(cue?.isAlert == true ? "ALERT" : (cue?.status.label.uppercased() ?? "STANDBY"))
-                        .font(.headline.weight(.heavy)).foregroundStyle(color)
-                    Spacer()
+                        .font(DealFont.jakarta(15, .extrabold))
+                        .kerning(2)
+                        .foregroundStyle(cue?.isAlert == true ? Palette.red : Palette.ink)
                 }
+                .padding(.leading, 12)
+                .padding(.trailing, 16)
+                .frame(height: 40)
+                .background(Capsule().fill(Palette.surfaceWarm))
 
-                Spacer()
+                Spacer(minLength: 24)
 
-                Text(cue?.text ?? "Waiting for cue")
-                    .font(.system(size: 54, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.4)
-                    .lineLimit(3)
-
-                if let detail = cue?.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.system(size: 30, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .multilineTextAlignment(.center)
-                        .minimumScaleFactor(0.5)
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(cue?.text ?? "Waiting for cue")
+                        .font(DealFont.jakarta(66, .extrabold))
+                        .kerning(-3)
+                        .lineSpacing(-4)
+                        .foregroundStyle(Palette.ink)
+                        .minimumScaleFactor(0.4)
+                        .lineLimit(3)
+                    if let detail = cue?.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(DealFont.jakarta(20, .regular))
+                            .foregroundStyle(Palette.mutedWarm)
+                            .lineSpacing(4)
+                            .minimumScaleFactor(0.5)
+                    }
                 }
+                .padding(.horizontal, 4)
 
-                Spacer()
+                Spacer(minLength: 24)
 
                 if let cue {
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading) {
-                            Text("OFFER").font(.caption.weight(.bold)).foregroundStyle(.white.opacity(0.6))
-                            Text(Money.format(cue.currentOffer, placeholder: "—"))
-                                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
-                        }
-                        Spacer()
-                        Image(systemName: "arrow.right").foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                        VStack(alignment: .trailing) {
-                            Text("TARGET").font(.caption.weight(.bold)).foregroundStyle(.white.opacity(0.6))
-                            Text(Money.format(cue.target))
-                                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
-                        }
+                    HStack(spacing: 12) {
+                        tile(Money.format(cue.currentOffer, placeholder: "—"), "OFFER", valueColor: Palette.ink)
+                        tile(Money.format(cue.target), "TARGET", valueColor: Palette.mutedWarm)
                     }
-                    .foregroundStyle(.white)
                 }
 
-                Text("Tap to close").font(.caption).foregroundStyle(.white.opacity(0.4))
+                Text("Tap anywhere to close")
+                    .font(DealFont.caption)
+                    .foregroundStyle(Palette.navInactive)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 20)
             }
-            .padding(28)
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 12)
         }
         .contentShape(Rectangle())
         .onTapGesture { dismiss() }
@@ -77,5 +79,23 @@ struct TeleprompterView: View {
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         #endif
+    }
+
+    private func tile(_ value: String, _ label: String, valueColor: Color) -> some View {
+        VStack(spacing: 6) {
+            Text(value)
+                .font(DealFont.jakarta(34, .extrabold))
+                .kerning(-1)
+                .foregroundStyle(valueColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text(label)
+                .font(DealFont.jakarta(12, .bold))
+                .kerning(1.4)
+                .foregroundStyle(Palette.mutedWarm)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surfaceWarm))
     }
 }

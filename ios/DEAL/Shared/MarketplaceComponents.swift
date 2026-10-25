@@ -10,37 +10,54 @@ struct ListingCard: View {
     var onRemove: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
                 Image(systemName: listing.isFacebookMarketplace ? "storefront.fill" : "doc.text")
-                    .foregroundStyle(Theme.accent)
+                    .font(.system(size: 13, weight: .bold))
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Palette.sand))
                 Text(listing.sourceDisplayName.uppercased())
-                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .font(DealFont.jakarta(11, .extrabold))
+                    .kerning(1.2)
+                    .foregroundStyle(Palette.muted)
                 Spacer()
                 if let onRemove {
-                    Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Remove listing")
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Palette.surface))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove listing")
                 }
             }
-            HStack(alignment: .firstTextBaseline) {
-                Text(listing.title).font(.headline).lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(listing.title).font(DealFont.jakarta(17, .extrabold)).lineLimit(2)
                 Spacer(minLength: 8)
                 Text(Money.format(listing.askingPrice))
-                    .font(.title3.weight(.bold).monospacedDigit())
+                    .font(DealFont.jakarta(24, .extrabold))
+                    .kerning(-0.6)
             }
             let meta = [listing.location, listing.sellerName].compactMap { $0 }.filter { !$0.isEmpty }
             if !meta.isEmpty {
-                Text(meta.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                Text(meta.joined(separator: " · ")).font(DealFont.caption).foregroundStyle(Palette.muted)
             }
             if !listing.conditionClaims.isEmpty {
-                Text("Seller claims").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text("Seller claims")
+                    .font(DealFont.jakarta(12, .bold))
+                    .foregroundStyle(Palette.muted)
+                    .padding(.top, 2)
                 ClaimChips(claims: listing.conditionClaims, wrap: true)
             }
             if let note {
-                Text(note).font(.caption2).foregroundStyle(.secondary)
+                Text(note).font(DealFont.jakarta(11)).foregroundStyle(Palette.muted)
             }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Palette.surfaceWarm))
+        .foregroundStyle(Palette.ink)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("listingCard")
     }
@@ -53,6 +70,8 @@ struct ClaimChips: View {
     var flagged: Set<String> = []
     /// Wrap onto several lines (B2) or a single scrolling line (B3 pinned panel).
     var wrap = false
+    /// Chip fill for unflagged claims (sand on white cards; white on the sand hero).
+    var fill: Color = Palette.sand
 
     var body: some View {
         if wrap {
@@ -67,16 +86,19 @@ struct ClaimChips: View {
     private var chips: some View {
         ForEach(claims, id: \.self) { claim in
             let bad = Self.isFlagged(claim, flagged)
-            HStack(spacing: 3) {
-                Image(systemName: bad ? "exclamationmark.triangle.fill" : "checkmark.seal")
+            HStack(spacing: 5) {
+                Image(systemName: bad ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(bad ? Palette.red : Palette.inkSoft)
                 Text(claim)
-                    .strikethrough(bad, color: .red)
+                    .strikethrough(bad, color: Palette.red)
             }
-            .font(.caption.weight(.medium))
+            .font(DealFont.jakarta(13, .semibold))
             .lineLimit(1)
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Capsule().fill(bad ? Color.red.opacity(0.15) : Color.secondary.opacity(0.12)))
-            .foregroundStyle(bad ? Color.red : Color.primary)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule().fill(bad ? Palette.red.opacity(0.12) : fill))
+            .foregroundStyle(bad ? Palette.red : Palette.ink)
         }
     }
 
@@ -97,42 +119,47 @@ struct DiscrepancyCard: View {
     var moreCount = 0
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: compact ? .center : .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(compact ? .subheadline : .title3)
-                .foregroundStyle(.orange)
+                .font(.system(size: compact ? 14 : 18, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: compact ? 32 : 44, height: compact ? 32 : 44)
+                .background(Circle().fill(Palette.red))
             VStack(alignment: .leading, spacing: compact ? 2 : 4) {
                 if !compact {
-                    Text("CONDITION MISMATCH").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                    Text("CONDITION MISMATCH")
+                        .font(DealFont.jakarta(11, .extrabold)).kerning(1.2)
+                        .foregroundStyle(Palette.red)
                 }
-                (Text("Listing: ").foregroundStyle(.secondary) + Text(discrepancy.claim).bold()
-                 + Text("  ·  Seen: ").foregroundStyle(.secondary) + Text(discrepancy.observed).bold())
-                    .font(compact ? .footnote : .subheadline)
+                (Text("Listing: ").foregroundStyle(Palette.muted) + Text(discrepancy.claim).fontWeight(.bold)
+                 + Text("  ·  Seen: ").foregroundStyle(Palette.muted) + Text(discrepancy.observed).fontWeight(.bold))
+                    .font(DealFont.jakarta(compact ? 13 : 15))
                     .lineLimit(compact ? 1 : 3)
                     .minimumScaleFactor(0.8)
                 if !compact, let cue = discrepancy.cue, !cue.isEmpty {
-                    Text("Glasses: \u{201C}\(cue)\u{201D}").font(.caption).foregroundStyle(.secondary)
+                    Text("Glasses: \u{201C}\(cue)\u{201D}").font(DealFont.caption).foregroundStyle(Palette.muted)
                 }
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 2) {
                 if let discount = discrepancy.suggestedDiscount, discount > 0 {
                     Text("ask \(Money.format(discount)) off")
-                        .font((compact ? Font.footnote : Font.headline).weight(.bold).monospacedDigit())
-                        .foregroundStyle(.green)
+                        .font(DealFont.jakarta(compact ? 13 : 16, .extrabold))
+                        .foregroundStyle(Palette.greenText)
                         .lineLimit(1)
                 }
                 if moreCount > 0 {
-                    Text("+\(moreCount) more").font(.caption2).foregroundStyle(.secondary)
+                    Text("+\(moreCount) more").font(DealFont.jakarta(11)).foregroundStyle(Palette.muted)
                 }
             }
         }
-        .padding(compact ? 10 : 14)
+        .foregroundStyle(Palette.ink)
+        .padding(.vertical, compact ? 10 : 16)
+        .padding(.horizontal, compact ? 12 : 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: compact ? 10 : Theme.cornerRadius, style: .continuous)
-            .fill(Color.orange.opacity(0.12)))
-        .overlay(RoundedRectangle(cornerRadius: compact ? 10 : Theme.cornerRadius, style: .continuous)
-            .strokeBorder(Color.orange.opacity(0.5), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: compact ? 24 : 28, style: .continuous).fill(Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: compact ? 24 : 28, style: .continuous)
+            .strokeBorder(Palette.red.opacity(0.55), lineWidth: 1.5))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("discrepancyCard")
     }
@@ -152,63 +179,66 @@ struct VerifiedHandoffCard: View {
     var body: some View {
         VStack(spacing: 14) {
             ZStack {
-                Circle().fill(Color.green.opacity(0.18))
+                Circle().fill(Palette.green.opacity(0.22))
                     .frame(width: 150, height: 150)
                     .scaleEffect(pulse ? 1.08 : 0.92)
                     .animation(.easeInOut(duration: 1.1).repeatForever(), value: pulse)
-                Circle().fill(Color.green.gradient).frame(width: 116, height: 116)
+                Circle().fill(Palette.greenText).frame(width: 116, height: 116)
                 Image(systemName: "checkmark")
-                    .font(.system(size: 60, weight: .heavy))
+                    .font(.system(size: 56, weight: .heavy))
                     .foregroundStyle(.white)
             }
             .padding(.top, 4)
 
             Text("Payment verified")
-                .font(.system(size: 34, weight: .heavy, design: .rounded))
-                .foregroundStyle(.green)
+                .font(DealFont.jakarta(32, .extrabold))
+                .kerning(-0.8)
+                .foregroundStyle(Palette.greenText)
             Text(role == .seller ? "Hand over the item" : "Seller can hand over the item")
-                .font(.title2.weight(.bold))
+                .font(DealFont.jakarta(20, .bold))
                 .multilineTextAlignment(.center)
 
             Text(Money.format(amount, alwaysShowCents: true))
-                .font(.system(size: 46, weight: .bold, design: .rounded).monospacedDigit())
+                .font(DealFont.jakarta(44, .extrabold))
+                .kerning(-1.5)
                 .lineLimit(1).minimumScaleFactor(0.6)
-            Text(item).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            Text(item).font(DealFont.jakarta(14)).foregroundStyle(Palette.muted).lineLimit(1)
 
             HStack(spacing: 0) {
                 fact("Agreement", fingerprint, mono: true)
-                Divider().frame(height: 34)
+                Rectangle().fill(Palette.divider).frame(width: 1, height: 34)
                 fact("Paid", TimeFormat.clock(verifiedAt ?? Date()), mono: false)
-                Divider().frame(height: 34)
+                Rectangle().fill(Palette.divider).frame(width: 1, height: 34)
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     fact("Verified", Self.ago(verifiedAt, now: ctx.date), mono: false)
                 }
             }
-            .padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.10)))
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.surfaceWarm))
 
             Label(role == .seller
                   ? "Confirmed by DEAL on this terminal, not a screenshot. The buyer's phone shows the same."
                   : "Confirmed by DEAL on both phones, so no \u{201C}payment sent\u{201D} screenshots.",
                   systemImage: "checkmark.shield.fill")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .font(DealFont.caption)
+                .foregroundStyle(Palette.muted)
                 .multilineTextAlignment(.leading)
         }
-        .padding(18)
+        .foregroundStyle(Palette.ink)
+        .padding(20)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.green.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.green, lineWidth: 3))
+        .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(Palette.green, lineWidth: 3))
         .onAppear { pulse = true }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("verifiedHandoff")
     }
 
     private func fact(_ label: String, _ value: String, mono: Bool) -> some View {
-        VStack(spacing: 2) {
-            Text(label.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+        VStack(spacing: 3) {
+            Text(label.uppercased()).font(DealFont.jakarta(10, .bold)).kerning(1).foregroundStyle(Palette.muted)
             Text(value)
-                .font(mono ? .subheadline.monospaced().weight(.semibold) : .subheadline.weight(.semibold).monospacedDigit())
+                .font(mono ? DealFont.mono(14, .semibold) : DealFont.jakarta(14, .bold))
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
@@ -273,23 +303,25 @@ struct ConditionCheckLineView: View {
     var event: DealEvent
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: "camera.viewfinder")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.orange)
-                .frame(width: 52, alignment: .leading)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Palette.ink)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Palette.sand))
             VStack(alignment: .leading, spacing: 2) {
                 if let cue = event.cue, !cue.isEmpty {
-                    Text(cue).font(.subheadline.weight(.semibold))
+                    Text(cue).font(DealFont.jakarta(14, .bold))
                 }
-                Text(event.text).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                Text(event.text).font(DealFont.caption).foregroundStyle(Palette.muted).lineLimit(3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let ts = event.timestamp {
-                Text(TimeFormat.clock(ts)).font(.caption2).foregroundStyle(.secondary)
+                Text(TimeFormat.clock(ts)).font(DealFont.jakarta(11)).foregroundStyle(Palette.muted)
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
+        .foregroundStyle(Palette.ink)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.surface))
     }
 }

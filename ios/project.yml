@@ -58,6 +58,16 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIRequiresFullScreen: true
+        UIAppFonts:
+          - PlusJakartaSans-Regular.ttf
+          - PlusJakartaSans-Medium.ttf
+          - PlusJakartaSans-SemiBold.ttf
+          - PlusJakartaSans-Bold.ttf
+          - PlusJakartaSans-ExtraBold.ttf
+          - Sacramento-Regular.ttf
+          - GeistMono-Regular.ttf
+          - GeistMono-Medium.ttf
+          - GeistMono-SemiBold.ttf
         NSMicrophoneUsageDescription: "DEAL listens to your negotiation to transcribe offers and coach you in real time."
         NSSpeechRecognitionUsageDescription: "DEAL transcribes the conversation on-device to track offers, fees and promises."
         NSCameraUsageDescription: "DEAL uses the camera to scan the buyer's join QR code and to photograph an item so its condition can be checked against the listing."
@@ -98,7 +108,7 @@ targets:
         PRODUCT_NAME: DEAL
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: ""        # set your team in Xcode (Signing & Capabilities) or here
+        DEVELOPMENT_TEAM: SQCY6XBRDY   # Lucas (Personal Team)
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_PREVIEWS: YES
         # Meta Wearables Developer Center credentials. Leave empty for Developer Mode.
@@ -127,7 +137,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.lucas.deal.uitests
         TEST_TARGET_NAME: DEAL
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: SQCY6XBRDY
         GENERATE_INFOPLIST_FILE: NO
 
 schemes:
