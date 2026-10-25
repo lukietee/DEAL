@@ -47,7 +47,10 @@ struct ReceiptView: View {
                     }
                 }
 
-                Button("Done") { model.exitToModePicker() }
+                // Buyer: back to B1 Home (the deal is now in Purchase History). Seller: mode picker.
+                Button("Done") {
+                    if store.role == .buyer { model.endSession() } else { model.exitToModePicker() }
+                }
                     .buttonStyle(PrimaryButtonStyle())
             }
             .padding()
@@ -57,7 +60,7 @@ struct ReceiptView: View {
         .onAppear {
             appeared = true
             Platform.haptic(.success)
-            if store.role == .buyer { model.teleprompter.clear() }
+            if store.role == .buyer { model.glasses.clear() }
         }
     }
 

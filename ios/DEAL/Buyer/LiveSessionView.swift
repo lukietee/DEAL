@@ -20,25 +20,32 @@ struct LiveSessionView: View {
     var body: some View {
         let state = store.state
         let session = state.session
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        header(session)
-                        offerSection(state)
-                        GlassesCueCard(cue: model.teleprompter.currentCue, displayName: model.glasses.name)
-                            .onTapGesture { showTeleprompter = true }
-                        termsSection(state)
-                        transcriptSection(state)
-                        Color.clear.frame(height: 1).id("bottom")
+        GeometryReader { geo in
+            // Small phones (SE / mini class) get a tighter pinned panel so the transcript keeps room.
+            let compact = geo.size.height < 640
+            VStack(spacing: 0) {
+                // Pinned: header, current offer vs target (status color) and the ON GLASSES cue.
+                // These never scroll away while the script plays.
+                pinnedPanel(state, compact: compact)
+                Divider()
+                // Scrolling: terms so far + transcript, auto-following the newest line.
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            termsSection(state)
+                            transcriptSection(state)
+                            Color.clear.frame(height: 1).id("bottom")
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 12)
                     }
-                    .padding()
+                    .frame(minHeight: compact ? 120 : 180)
+                    .onChange(of: state.events.count) {
+                        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
                 }
-                .onChange(of: state.events.count) {
-                    withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
-                }
+                controls(state)
             }
-            controls(state)
         }
         .navigationTitle("Live")
         .dealInlineTitle()
@@ -81,10 +88,27 @@ struct LiveSessionView: View {
 
     // MARK: Sections
 
-    private func header(_ session: Session) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(session.item).font(.title2.weight(.bold)).lineLimit(2)
+    private func pinnedPanel(_ state: SessionState, compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
+            header(state.session, compact: compact)
+            offerSection(state, compact: compact)
+            GlassesCueCard(cue: model.teleprompter.currentCue, displayName: model.glasses.name)
+                .onTapGesture { showTeleprompter = true }
+                .animation(.default, value: model.teleprompter.currentCue?.text)
+        }
+        .padding(.horizontal)
+        .padding(.top, compact ? 6 : 10)
+        .padding(.bottom, compact ? 8 : 12)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func header(_ session: Session, compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(session.item)
+                    .font(compact ? .headline : .title3.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Spacer()
                 if paused {
                     LiveBadge(text: "PAUSED", color: .gray)
@@ -94,26 +118,36 @@ struct LiveSessionView: View {
             }
             Text("Asking \(Money.format(session.askingPrice)) → Target \(Money.format(session.targetPrice))")
                 .font(.subheadline).foregroundStyle(.secondary)
-            Text("Max \(Money.format(session.maxBudget)) · \(session.style.capitalized) · Code \(session.joinCode)")
-                .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            if !compact {
+                Text("Max \(Money.format(session.maxBudget)) · \(session.style.capitalized) · Code \(session.joinCode)")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
         }
     }
 
-    private func offerSection(_ state: SessionState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Current offer:").font(.headline)
+    private func offerSection(_ state: SessionState, compact: Bool) -> some View {
+        let session = state.session
+        let status = OfferMath.status(target: session.targetPrice, maxBudget: session.maxBudget, offer: state.currentOffer)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                StatusDot(color: status.color, size: 10)
+                Text("Current offer").font(.headline)
+                if let by = state.currentOfferBy {
+                    Text("by \(by == .buyer ? "you" : "seller")").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text(Money.format(state.currentOffer, placeholder: "—"))
-                    .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(.system(size: compact ? 26 : 32, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(state.currentOffer == nil ? Color.secondary : Color.primary)
                     .contentTransition(.numericText())
                     .animation(.default, value: state.currentOffer)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
-            if let by = state.currentOfferBy {
-                Text("by \(by == .buyer ? "you" : "seller")").font(.caption).foregroundStyle(.secondary)
-            }
-            OfferProgressBar(asking: state.session.askingPrice, target: state.session.targetPrice,
-                             maxBudget: state.session.maxBudget, offer: state.currentOffer)
+            OfferProgressBar(asking: session.askingPrice, target: session.targetPrice,
+                             maxBudget: session.maxBudget, offer: state.currentOffer)
         }
     }
 

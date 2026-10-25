@@ -39,12 +39,28 @@ struct ModePickerView: View {
         }
     }
 
+    private var glassesLabel: String {
+        let glasses = model.metaGlasses
+        switch glasses.status {
+        case .connected: return "Glasses connected"
+        case .off: return "Connect glasses"
+        case .failed: return "Glasses failed · retry"
+        default: return glasses.status.label
+        }
+    }
+
     private var statusRow: some View {
         HStack(spacing: 18) {
-            HStack(spacing: 6) {
-                StatusDot(color: model.glasses.isConnected ? .green : .gray)
-                Text(model.glasses.isConnected ? "Glasses: \(model.glasses.name)" : "Glasses not connected")
+            Button {
+                if model.metaGlasses.wantsConnection { showSettings = true } else { model.metaGlasses.connect() }
+            } label: {
+                HStack(spacing: 6) {
+                    StatusDot(color: model.metaGlasses.status.color)
+                    Text(glassesLabel)
+                }
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("glassesStatus")
             HStack(spacing: 6) {
                 StatusDot(color: model.backendReachable == nil ? .gray : (model.backendReachable == true ? .green : .red))
                 Text(model.backendReachable == false ? "Backend offline" : "Backend")

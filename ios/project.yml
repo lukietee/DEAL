@@ -5,7 +5,7 @@ name: DEAL
 options:
   bundleIdPrefix: com.lucas
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "17.2"
   createIntermediateGroups: true
   developmentLanguage: en
 
@@ -13,6 +13,10 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: 2.55.4   # verified to compile against 2.55.4 (Realtime V2 filter + subscribeWithError APIs)
+  MWDAT:
+    # Meta Wearables Device Access Toolkit (Ray-Ban Meta Display output). Needs iOS 17.2+.
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    exactVersion: 1.0.1
 
 settings:
   base:
@@ -24,12 +28,24 @@ targets:
   DEAL:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "17.2"
     sources:
       - path: DEAL
     dependencies:
       - package: Supabase
         product: Supabase
+      - package: MWDAT
+        product: MWDATCore
+      - package: MWDAT
+        product: MWDATDisplay
+      - package: MWDAT
+        product: MWDATMockDevice
+    entitlements:
+      # The Meta wearables SDK keeps its registration token in the app's keychain group.
+      path: DEAL/DEAL.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)
     info:
       path: DEAL/Info.plist
       properties:
@@ -45,7 +61,33 @@ targets:
         NSMicrophoneUsageDescription: "DEAL listens to your negotiation to transcribe offers and coach you in real time."
         NSSpeechRecognitionUsageDescription: "DEAL transcribes the conversation on-device to track offers, fees and promises."
         NSCameraUsageDescription: "DEAL uses the camera to scan the buyer's join QR code."
-        NSLocalNetworkUsageDescription: "DEAL connects to the DEAL backend running on your local network during the demo."
+        NSLocalNetworkUsageDescription: "DEAL connects to the DEAL backend on your local network and to your Meta glasses over Wi-Fi."
+        # --- Meta Wearables Device Access Toolkit (Ray-Ban Meta Display output) ---
+        # URL scheme Meta AI uses to call DEAL back after registration (keep in sync with MWDAT.AppLinkURLScheme).
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleURLSchemes:
+              - deal
+        MWDAT:
+          AppLinkURLScheme: "deal://"
+          # Empty / "0" / unexpanded META_APP_ID = Developer Mode (no attestation). For a
+          # non-Developer-Mode build, set META_APP_ID + CLIENT_TOKEN (Wearables Developer Center)
+          # and DEVELOPMENT_TEAM in the target build settings below. Never commit real values.
+          MetaAppID: $(META_APP_ID)
+          ClientToken: $(CLIENT_TOKEN)
+          TeamID: $(DEVELOPMENT_TEAM)
+        # The SDK checks Info.plist for each link type (BLE, Bluetooth Classic, Wi-Fi) before using it.
+        UIBackgroundModes:
+          - processing
+          - bluetooth-central
+          - bluetooth-peripheral
+          - external-accessory
+        UISupportedExternalAccessoryProtocols:
+          - com.meta.ar.wearable
+        NSBluetoothAlwaysUsageDescription: "DEAL uses Bluetooth to show negotiation cues on your Meta glasses."
+        NSBonjourServices:
+          - _bonjour._tcp
         NSAppTransportSecurity:
           # Plain http to localhost (Simulator), *.local hosts and LAN IPs (http://192.168.x.x:3000).
           # ngrok URLs are https and need no exception.
@@ -59,6 +101,10 @@ targets:
         DEVELOPMENT_TEAM: ""        # set your team in Xcode (Signing & Capabilities) or here
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_PREVIEWS: YES
+        # Meta Wearables Developer Center credentials. Leave empty for Developer Mode.
+        # Set locally (Xcode build settings or an uncommitted override), never commit real values.
+        META_APP_ID: ""
+        CLIENT_TOKEN: ""
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
 
   # UI smoke tests: drive one phone through the UI, play the other phone over the backend API.
@@ -66,7 +112,7 @@ targets:
   DEALUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "17.2"
     sources:
       - path: DEALUITests
     dependencies:

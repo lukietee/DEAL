@@ -45,12 +45,13 @@ struct SettingsView: View {
                          : "Realtime enabled for new sessions. Never paste the service-role key here.")
                 }
 
-                Section("Glasses") {
+                Section {
+                    MetaGlassesSettingsRows(glasses: model.metaGlasses)
                     HStack {
-                        StatusDot(color: model.glasses.isConnected ? .green : .gray)
-                        Text(model.glasses.name)
+                        StatusDot(color: .green)
+                        Text(model.teleprompter.name)
                         Spacer()
-                        Text(model.glasses.isConnected ? "Connected" : "Not connected").foregroundStyle(.secondary)
+                        Text("Always on").foregroundStyle(.secondary)
                     }
                     Button("Send test cue") {
                         model.glasses.show(GlassesCue(text: "Redirect to total price", detail: "$489/mo × 72 = $35,208",
@@ -59,6 +60,10 @@ struct SettingsView: View {
                         showTeleprompter = true
                     }
                     Button("Open teleprompter") { showTeleprompter = true }
+                } header: {
+                    Text("Glasses")
+                } footer: {
+                    Text("Cues go to the phone teleprompter and, when connected, the Meta Ray-Ban Display. Needs Meta AI with Developer Mode on (see ios/README.md).")
                 }
 
                 Section {

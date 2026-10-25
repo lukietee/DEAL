@@ -8,9 +8,13 @@ enum AppMode: String, Sendable { case buyer, seller }
 @Observable
 final class AppModel {
     let settings: AppSettings
-    /// Swap for `MetaGlassesDisplay` tomorrow; the teleprompter stays as fallback/mirror.
-    let teleprompter = PhoneTeleprompterDisplay()
-    var glasses: GlassesDisplay { teleprompter }
+    /// Phone fallback / projector mirror. Always receives every cue.
+    let teleprompter: PhoneTeleprompterDisplay
+    /// Ray-Ban Meta Display (Meta Wearables SDK). Connect from the mode picker or Settings.
+    let metaGlasses: MetaGlassesDisplay
+    /// What sessions push cues to: the teleprompter AND the Meta glasses.
+    let glassesFanOut: GlassesFanOut
+    var glasses: GlassesDisplay { glassesFanOut }
 
     var mode: AppMode?
     private(set) var activeStore: SessionStore?
@@ -18,6 +22,11 @@ final class AppModel {
 
     init(settings: AppSettings? = nil) {
         self.settings = settings ?? AppSettings()
+        let teleprompter = PhoneTeleprompterDisplay()
+        let metaGlasses = MetaGlassesDisplay()
+        self.teleprompter = teleprompter
+        self.metaGlasses = metaGlasses
+        self.glassesFanOut = GlassesFanOut(phone: teleprompter, meta: metaGlasses)
     }
 
     var api: APIClient { APIClient(baseURL: settings.backendURL) }
@@ -36,7 +45,7 @@ final class AppModel {
     func endSession() {
         activeStore?.stopAll()
         activeStore = nil
-        teleprompter.clear()
+        glasses.clear()
     }
 
     func exitToModePicker() {

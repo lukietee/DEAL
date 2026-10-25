@@ -62,6 +62,13 @@ struct APIClient: Sendable {
         try await send("GET", "/sessions/\(id.urlPathEscaped)", body: Optional<Empty>.none)
     }
 
+    /// B7 "Export Dispute Pack": the raw `deal-dispute-pack/v1` JSON, passed through untouched.
+    func disputePack(sessionID: String) async throws -> Data {
+        let (data, _) = try await raw("GET", "/sessions/\(sessionID.urlPathEscaped)/dispute-pack",
+                                      body: Optional<Empty>.none, expectSuccess: true)
+        return data
+    }
+
     func postEvent(sessionID: String, speaker: Speaker, text: String) async throws -> DealEvent {
         try await send("POST", "/sessions/\(sessionID.urlPathEscaped)/events",
                        body: PostEventBody(speaker: speaker, text: text), unwrap: "event")

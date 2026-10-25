@@ -7,6 +7,7 @@ import XCTest
 ///     -destination 'platform=iOS Simulator,name=iPhone 18 Pro' \
 ///     TEST_RUNNER_DEAL_SHOT_DIR=/some/dir    # optional: also write PNG screenshots there
 ///
+/// Buyer: mode picker -> B1 -> B2 -> ... -> B6 -> B1 -> B7 history -> Deal Detail -> dispute pack share.
 /// Screenshots are always attached to the .xcresult as well.
 final class DEALFlowUITests: XCTestCase {
     private let base = URL(string: ProcessInfo.processInfo.environment["DEAL_BACKEND_URL"] ?? "http://127.0.0.1:3000")!
@@ -21,7 +22,20 @@ final class DEALFlowUITests: XCTestCase {
     // MARK: Buyer phone (UI) + seller via API
 
     func testBuyerFlow() throws {
-        button(startingWith: "I'm Buying").tapWhenReady()
+        let buying = button(startingWith: "I'm Buying")
+        XCTAssertTrue(buying.waitForExistence(timeout: 10))
+        shot("A0-mode-picker")
+        app.buttons["Settings"].tapWhenReady()
+        sleep(1)
+        shot("A1-settings")
+        app.buttons["Done"].tapWhenReady()
+        buying.tapWhenReady()
+        let startNegotiation = app.buttons["startNegotiation"]
+        XCTAssertTrue(startNegotiation.waitForExistence(timeout: 10), "B1 home never appeared")
+        XCTAssertTrue(app.buttons["purchaseHistory"].waitForExistence(timeout: 10))
+        sleep(1)
+        shot("B1-home")
+        startNegotiation.tap()
         shot("B2-new-negotiation")
         app.buttons["Use demo values"].tapWhenReady()
         let existing = Set(try sessionIDs())
@@ -49,6 +63,18 @@ final class DEALFlowUITests: XCTestCase {
         waitUntil(timeout: 120) { ((try? self.state(sid)["script"] as? [String: Any])?["done"] as? Bool) == true }
         sleep(2)
         shot("B3-live-script-done")
+
+        app.buttons["Open teleprompter"].tapWhenReady()
+        sleep(1)
+        shot("B3-teleprompter")
+        app.tap()
+        app.buttons["Fix a term"].tapWhenReady()
+        sleep(1)
+        shot("B3-fix-term-picker")
+        app.buttons.matching(NSPredicate(format: "label CONTAINS '·'")).firstMatch.tapWhenReady()
+        sleep(1)
+        shot("B3-fix-term-sheet")
+        app.buttons["Cancel"].tapWhenReady()
 
         app.buttons["Lock Deal"].tapWhenReady()
         let confirm = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Confirm'")).firstMatch
@@ -89,6 +115,27 @@ final class DEALFlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Payment complete"].waitForExistence(timeout: 15), "B6 receipt never appeared")
         sleep(1)
         shot("B6-receipt")
+
+        // B6 Done -> B1 Home -> B7 Purchase History -> Deal Detail for this session.
+        app.buttons["Done"].tapWhenReady()
+        app.buttons["purchaseHistory"].tapWhenReady()
+        let row = app.buttons["historyRow-\(sid)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "B7 history never listed the new purchase")
+        sleep(1)
+        shot("B7-history")
+        row.tap()
+        XCTAssertTrue(app.staticTexts["Offer timeline".uppercased()].waitForExistence(timeout: 15), "Deal Detail never loaded")
+        let export = app.buttons["exportDisputePack"]
+        XCTAssertTrue(export.waitForExistence(timeout: 15), "Export Dispute Pack never became available")
+        sleep(1)
+        shot("B7-deal-detail")
+        // The dispute pack is the backend's JSON for this session.
+        let pack = try api("GET", "/sessions/\(sid)/dispute-pack")
+        XCTAssertEqual(pack["format"] as? String, "deal-dispute-pack/v1")
+        for _ in 0..<6 where !export.isHittable { app.swipeUp() }
+        export.tap()
+        sleep(2)
+        shot("B7-dispute-pack-share")
     }
 
     // MARK: Seller phone (UI) + buyer via API

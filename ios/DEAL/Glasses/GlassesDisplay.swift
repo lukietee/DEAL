@@ -2,8 +2,8 @@ import Foundation
 import Observation
 
 /// Display-only output for glanceable cues (Section 4 "Roles": glasses never take input
-/// during a negotiation). The Meta wearables SDK implementation (`MetaGlassesDisplay`)
-/// arrives tomorrow; `PhoneTeleprompterDisplay` is the fallback.
+/// during a negotiation). Implementations: `MetaGlassesDisplay` (Ray-Ban Meta Display via the
+/// Meta Wearables SDK) and `PhoneTeleprompterDisplay` (fallback). `GlassesFanOut` drives both.
 @MainActor
 protocol GlassesDisplay: AnyObject {
     var name: String { get }
@@ -36,5 +36,33 @@ final class PhoneTeleprompterDisplay: GlassesDisplay {
     func clear() {
         currentCue = nil
         revision += 1
+    }
+}
+
+/// Sends every cue to the phone teleprompter (always on, so B3 / the projector mirror never
+/// go blank) and to the Meta glasses (when connected; it no-ops or queues otherwise).
+@MainActor
+@Observable
+final class GlassesFanOut: GlassesDisplay {
+    let phone: PhoneTeleprompterDisplay
+    let meta: MetaGlassesDisplay
+
+    init(phone: PhoneTeleprompterDisplay, meta: MetaGlassesDisplay) {
+        self.phone = phone
+        self.meta = meta
+    }
+
+    var name: String { meta.isConnected ? "\(meta.name) + phone" : phone.name }
+    var isConnected: Bool { true }
+    var currentCue: GlassesCue? { phone.currentCue }
+
+    func show(_ cue: GlassesCue) {
+        phone.show(cue)
+        meta.show(cue)
+    }
+
+    func clear() {
+        phone.clear()
+        meta.clear()
     }
 }
