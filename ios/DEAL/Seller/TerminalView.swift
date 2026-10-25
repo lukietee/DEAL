@@ -62,7 +62,7 @@ struct TerminalView: View {
         }
         .dealKeepAwake()
         .sheet(isPresented: $showAddItem) {
-            AddLineItemSheet { label, amount in
+            AddLineItemSheet(prefill: state.isMarketplace ? ("gas fee", "20") : ("protection package", "1200")) { label, amount in
                 Task { await store.addLineItem(label: label, amount: amount) }
             }
         }
@@ -164,11 +164,19 @@ private struct ContactlessRings: View {
 
 /// S4 "+ Add line item" (e.g. "protection package", $1,200). The amount is the extra only;
 /// the agreed lines are included automatically.
+/// Marketplace sessions pre-fill the demo's "$20 for gas".
 struct AddLineItemSheet: View {
     var onAdd: (String, Int) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var label = "protection package"
-    @State private var amount = "1200"
+    @State private var label: String
+    @State private var amount: String
+
+    init(prefill: (label: String, dollars: String) = ("protection package", "1200"),
+         onAdd: @escaping (String, Int) -> Void) {
+        self.onAdd = onAdd
+        _label = State(initialValue: prefill.label)
+        _amount = State(initialValue: prefill.dollars)
+    }
 
     var body: some View {
         NavigationStack {

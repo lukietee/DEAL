@@ -36,8 +36,10 @@ final class DEALFlowUITests: XCTestCase {
         sleep(1)
         shot("B1-home")
         startNegotiation.tap()
+        // B2 opens on the Marketplace demo import; "Car demo" switches to the Accord scenario.
+        app.buttons["Car demo"].tapWhenReady()
+        sleep(1)
         shot("B2-new-negotiation")
-        app.buttons["Use demo values"].tapWhenReady()
         let existing = Set(try sessionIDs())
         let start = app.buttons["Start Session"]
         if !start.waitForExistence(timeout: 3) || !start.isHittable { app.swipeUp() }
@@ -138,6 +140,152 @@ final class DEALFlowUITests: XCTestCase {
         shot("B7-dispute-pack-share")
     }
 
+    // MARK: Marketplace meetup: buyer phone (UI) + seller via API
+
+    /// Flagship demo: import the Facebook Marketplace bike ($650), negotiate with the
+    /// `marketplace_bike` script (settles at $520), catch the worn tires with a condition check,
+    /// seller tries "$20 gas" at the terminal -> blocked -> reject -> agreed amount -> verified handoff.
+    func testMarketplaceBuyerFlow() throws {
+        button(startingWith: "I'm Buying").tapWhenReady()
+        app.buttons["startNegotiation"].tapWhenReady()
+
+        // B2: "Use demo values" runs a canned import of the demo listing link.
+        app.buttons["Use demo values"].tapWhenReady()
+        XCTAssertTrue(app.staticTexts["Seller claims"].waitForExistence(timeout: 15), "B2 listing card never appeared")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '$650'")).firstMatch.exists,
+                      "listing card should show the $650 asking price")
+        sleep(1)
+        shot("M-B2-import")
+
+        let existing = Set(try sessionIDs())
+        let start = app.buttons["Start Session"]
+        for _ in 0..<4 where !(start.exists && start.isHittable) { app.swipeUp() }
+        start.tapWhenReady()
+        let done = app.buttons["Done"]
+        if done.waitForExistence(timeout: 5) { done.tap() }
+
+        var sid = ""
+        waitUntil(timeout: 15) {
+            guard let new = (try? self.sessionIDs())?.first(where: { !existing.contains($0) }) else { return false }
+            sid = new
+            return true
+        }
+        let session = try XCTUnwrap(try state(sid)["session"] as? [String: Any])
+        XCTAssertEqual(session["category"] as? String, "marketplace")
+        XCTAssertEqual(session["asking_price"] as? Int, 65_000)
+        XCTAssertNotNil(session["listing"] as? [String: Any], "GET /sessions/:id should return session.listing")
+        XCTAssertTrue(app.otherElements["listingClaims"].waitForExistence(timeout: 10) ||
+                      app.staticTexts["Listing says"].exists, "B3 should show the listing's claims")
+
+        let play = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Play'")).firstMatch
+        play.tapWhenReady()
+        waitUntil(timeout: 30) { ((try? self.state(sid)["script"] as? [String: Any])?["script_id"] as? String) == "marketplace_bike" }
+        waitUntil(timeout: 60) { (try? self.state(sid)["events"] as? [Any])?.count ?? 0 >= 4 }
+        sleep(1)
+        shot("M-B3-live")
+
+        // Check condition: Simulator has no camera, so use the canned observation.
+        app.buttons["Check condition"].tapWhenReady()
+        app.buttons["Use sample observation"].tapWhenReady()
+        app.buttons["Check against listing"].tapWhenReady()
+        XCTAssertTrue(app.staticTexts["CONDITION MISMATCH"].waitForExistence(timeout: 20), "condition check found no mismatch")
+        sleep(1)
+        shot("M-B3-condition-sheet")
+        app.buttons["Done"].tapWhenReady()
+        XCTAssertTrue(app.descendants(matching: .any)["discrepancyCard"].waitForExistence(timeout: 10),
+                      "B3 should pin the discrepancy card")
+        sleep(2)
+        shot("M-B3-condition")
+
+        waitUntil(timeout: 150) { ((try? self.state(sid)["script"] as? [String: Any])?["done"] as? Bool) == true }
+        sleep(2)
+        app.buttons["Lock Deal"].tapWhenReady()
+        let confirm = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Confirm'")).firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 20), "B4 Confirm button never appeared")
+        confirm.tap()
+
+        let agreement = try XCTUnwrap(try state(sid)["agreement"] as? [String: Any])
+        XCTAssertEqual(agreement["total"] as? Int, 52_000, "marketplace_bike should settle at $520")
+        _ = try api("POST", "/agreements/\(try XCTUnwrap(agreement["id"] as? String))/confirm", ["role": "seller"])
+        sleep(2)
+
+        // Seller adds "$20 for gas" at the terminal -> blocked -> B5.
+        let agreed = agreedLineItems(agreement)
+        let blocked = try api("POST", "/sessions/\(sid)/payment-requests",
+                              ["line_items": agreed + [["label": "gas fee", "amount": 2_000]]])
+        XCTAssertEqual(blocked["status"] as? String, "blocked")
+        let reject = app.buttons["Reject"]
+        XCTAssertTrue(reject.waitForExistence(timeout: 15), "B5 charge alert never appeared")
+        sleep(1)
+        shot("M-B5-gas-blocked")
+        reject.tap()
+        sleep(2)
+
+        let ok = try api("POST", "/sessions/\(sid)/payment-requests", ["line_items": agreed])
+        XCTAssertEqual(ok["status"] as? String, "approved")
+        _ = try api("POST", "/payment-requests/\(try XCTUnwrap(ok["id"] as? String))/pay")
+        XCTAssertTrue(app.staticTexts["Payment verified"].waitForExistence(timeout: 15), "B6 verified handoff never appeared")
+        XCTAssertTrue(app.staticTexts["Seller can hand over the item"].exists)
+        sleep(2)
+        shot("M-B6-verified")
+        for _ in 0..<4 where !app.buttons["Done"].isHittable { app.swipeUp() }
+        app.buttons["Done"].tapWhenReady()
+        XCTAssertTrue(app.buttons["startNegotiation"].waitForExistence(timeout: 10), "Done should return to B1")
+    }
+
+    /// Seller phone for the Marketplace meetup: terminal pre-fills "$20 gas", buyer rejects,
+    /// Tap to Pay, then S5's "Payment verified, hand over the item".
+    func testMarketplaceSellerFlow() throws {
+        let session = try api("POST", "/sessions", [
+            "category": "marketplace", "item": "Road bike, 56cm aluminum, Shimano 105", "asking_price": 65_000,
+            "target_price": 52_000, "max_budget": 57_500, "style": "firm",
+            "listing": [
+                "title": "Road bike, 56cm aluminum, Shimano 105", "asking_price": 65_000, "category": "marketplace",
+                "condition_claims": ["New tires", "Shifts perfectly"], "description": "Demo listing",
+                "source": "facebook_marketplace",
+            ],
+        ])
+        let sid = try XCTUnwrap(session["id"] as? String)
+        let code = try XCTUnwrap(session["join_code"] as? String)
+
+        button(startingWith: "I'm Selling").tapWhenReady()
+        let field = app.textFields["Join code"]
+        field.tapWhenReady()
+        field.typeText(code)
+        app.buttons["Join"].tapWhenReady()
+
+        _ = try api("POST", "/sessions/\(sid)/script/play", ["script_id": "marketplace_bike", "interval_ms": 250])
+        waitUntil(timeout: 60) { ((try? self.state(sid)["script"] as? [String: Any])?["done"] as? Bool) == true }
+        let agreement = try api("POST", "/sessions/\(sid)/agreement")
+        _ = try api("POST", "/agreements/\(try XCTUnwrap(agreement["id"] as? String))/confirm", ["role": "buyer"])
+        let confirm = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Confirm'")).firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15), "S3 Confirm never appeared")
+        confirm.tap()
+
+        XCTAssertTrue(app.staticTexts["DEAL Terminal"].waitForExistence(timeout: 15), "S4 terminal never appeared")
+        XCTAssertTrue(app.staticTexts["$520.00"].waitForExistence(timeout: 5), "terminal should show the agreed $520.00")
+        sleep(1)
+        shot("M-S4-terminal")
+
+        app.buttons["Add line item"].tapWhenReady()
+        XCTAssertEqual(app.textFields["Label"].waitForExistence(timeout: 5) ? app.textFields["Label"].value as? String : nil, "gas fee")
+        app.buttons["Add"].tapWhenReady()
+        XCTAssertTrue(app.staticTexts["Waiting for buyer approval"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '$540.00'")).firstMatch.exists,
+                      "terminal should show the $540.00 requested total")
+        shot("M-S4-gas-waiting")
+        let blocked = try XCTUnwrap((try state(sid)["payment_requests"] as? [[String: Any]])?.first { $0["status"] as? String == "blocked" })
+        _ = try api("POST", "/payment-requests/\(try XCTUnwrap(blocked["id"] as? String))/decision", ["decision": "reject"])
+
+        XCTAssertTrue(app.staticTexts["Buyer rejected the change"].waitForExistence(timeout: 15))
+        app.buttons["Tap to Pay"].tapWhenReady()
+        XCTAssertTrue(app.staticTexts["Payment verified"].waitForExistence(timeout: 20), "S5 verified handoff never appeared")
+        XCTAssertTrue(app.staticTexts["Hand over the item"].exists)
+        sleep(2)
+        shot("M-S5-verified")
+        XCTAssertNotNil(try state(sid)["receipt"] as? [String: Any])
+    }
+
     // MARK: Seller phone (UI) + buyer via API
 
     func testSellerFlow() throws {
@@ -197,6 +345,21 @@ final class DEALFlowUITests: XCTestCase {
 
     // MARK: Helpers
 
+    /// Mirrors the app's `agreedLineItems`: first item carries the price, other items $0, then fees.
+    private func agreedLineItems(_ agreement: [String: Any]) -> [[String: Any]] {
+        let items = agreement["items"] as? [String] ?? []
+        let price = agreement["price"] as? Int ?? 0
+        let total = agreement["total"] as? Int ?? price
+        var lines: [[String: Any]] = [["label": items.first ?? "item", "amount": price]]
+        for extra in items.dropFirst() { lines.append(["label": extra, "amount": 0]) }
+        for fee in agreement["fees"] as? [[String: Any]] ?? [] {
+            lines.append(["label": fee["label"] as? String ?? "fee", "amount": fee["amount"] as? Int ?? 0])
+        }
+        let sum = lines.reduce(0) { $0 + ($1["amount"] as? Int ?? 0) }
+        if sum != total { lines[0]["amount"] = price + (total - sum) }
+        return lines
+    }
+
     private func button(startingWith prefix: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
@@ -208,7 +371,7 @@ final class DEALFlowUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         if let dir = ProcessInfo.processInfo.environment["DEAL_SHOT_DIR"] {
-            let prefix = name.hasPrefix("S") ? "seller" : "buyer"
+            let prefix = name.hasPrefix("S") || name.hasPrefix("M-S") ? "seller" : "buyer"
             try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(prefix)-\(name).png"))
         }
     }

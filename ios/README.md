@@ -15,8 +15,29 @@ Xcode project is generated from `project.yml` by XcodeGen. Don't hand-edit `DEAL
    - **On an iPhone:** open the gear icon on the mode picker and set the Backend URL to your ngrok https URL or to `http://<Mac LAN IP>:3000`. Then tap **Test connection**.
 8. CLI build check: `xcodebuild -project DEAL.xcodeproj -scheme DEAL -destination 'generic/platform=iOS Simulator' build`
 
-### Two-phone demo (or Simulator + iPhone)
-- **Buyer:** I'm Buying → B1 Home → **Start Negotiation** → B2 (Use demo values, Start Session). A join code and QR appear.
+### Two-phone demo: Facebook Marketplace meetup (flagship)
+Strangers haggling face to face over a used road bike listed at $650. DEAL coaches the buyer, catches
+condition claims that don't hold up, locks the agreed price, and the seller's phone is the terminal, so
+both phones show the payment verified before the bike changes hands (no fake "payment sent" screenshots).
+- **Buyer:** I'm Buying → **Start Negotiation** → B2. The **Import listing** section loads the demo
+  Marketplace link on its own (or tap **Use demo values**). You can also paste a link (paste button) or pick a
+  listing screenshot. `POST /listings/parse` fills in Marketplace, the item and $650, plus target $520 / max $575.
+  The listing card shows the seller's claims ("like new", "new tires last month", ...). **Start Session**.
+- **Seller:** I'm Selling → scan the QR or type the code.
+- **Buyer:** B3 shows "Listing says" claim chips under the header. Tap **Play script** (`marketplace_bike`).
+- **Buyer:** toolbar **camera** icon (**Check condition**): take a photo (device), choose one (PhotosPicker), or
+  in the Simulator tap **Use sample observation**, then **Check against listing**. `POST /sessions/:id/condition-check`
+  returns the mismatches. B3 pins "Listing: new tires last month · Seen: worn · ask $40 off", the claim chip turns
+  red, and the cue ("Tires worn: ask $40 off") reaches the glasses through the normal cue path.
+- **Lock Deal** → both confirm ($520). **Seller:** **+ Add line item** is pre-filled with "gas fee" $20, which gets
+  **blocked**. **Buyer:** B5 → **Reject**. **Seller:** **Tap to Pay**.
+- **Both phones:** a big green **Payment verified** card ("Hand over the item" on the seller,
+  "Seller can hand over the item" on the buyer) with the amount, short agreement fingerprint, paid time and a live
+  "verified Ns ago" clock, above the normal receipt.
+
+### Two-phone demo: car (secondary scenario)
+- In B2 tap **Car demo** (next to Use demo values) to load the 2023 Honda Accord.
+- **Buyer:** I'm Buying → B1 Home → **Start Negotiation** → B2 (**Car demo**, Start Session). A join code and QR appear.
 - **Seller:** I'm Selling → S1, then scan the QR or type the code → S2.
 - **Buyer:** B3, then **Play script**. The `car_accord` script plays through the backend, and the cues, offers and terms update live.
 - **Buyer:** **Lock Deal** → B4 → **Confirm**. **Seller:** S3 → **Confirm**. The agreement locks and the seller's phone becomes the S4 terminal.
@@ -31,7 +52,8 @@ ios/
 ├── project.yml                 XcodeGen spec (Info.plist keys, Supabase SPM, ATS local networking)
 ├── DEAL/
 │   ├── App/                    DEALApp (entry + RootView), AppModel, ModePickerView, SettingsView
-│   ├── Buyer/                  BuyerFlowView (router), BuyerHomeView (B1), NewNegotiationView (B2), LiveSessionView (B3 + Fix a term),
+│   ├── Buyer/                  BuyerFlowView (router), BuyerHomeView (B1), NewNegotiationView (B2 + Import listing), LiveSessionView (B3 + Fix a term),
+│   │                           ConditionCheckView (B3 Check condition sheet + CameraPicker),
 │   │                           AgreementReviewView (B4, reused for S3), ChargeAlertView (B5), ReceiptView (B6, reused for S5),
 │   │                           PurchaseHistoryView (B7 list + DealDetailView + dispute pack export)
 │   ├── Seller/                 SellerFlowView (router + S2 SellerLiveView), JoinSessionView (S1), QRScannerView, TerminalView (S4)
@@ -39,7 +61,10 @@ ios/
 │   │                           SessionLogic (pure derived state: phases, terminal state, cues, line items),
 │   │                           HistoryLogic (B1/B7: purchases, totals, offer timeline, key cues),
 │   │                           SessionStore, SessionSync (protocol + polling), SupabaseRealtimeSessionSync,
-│   │                           Config, AppSettings, Components, PlatformCompat
+│   │                           Config, AppSettings, Components, PlatformCompat,
+│   │                           Marketplace (Listing, Discrepancy, condition-check bodies, demo listing),
+│   │                           MarketplaceComponents (ListingCard, ClaimChips, DiscrepancyCard, VerifiedHandoffCard),
+│   │                           ImageEncoding (photo → downscaled base64 JPEG)
 │   ├── Speech/                 SpeechTranscriber protocol + AppleSpeechTranscriber (SFSpeechRecognizer)
 │   └── Glasses/                GlassesDisplay protocol, PhoneTeleprompterDisplay, GlassesFanOut, TeleprompterView,
 │                               MetaGlassesDisplay (Meta Wearables SDK, no SwiftUI import), MetaGlassesUI (SwiftUI bits)
@@ -56,6 +81,12 @@ ios/
 - **Seller terminal:** the amount is always `agreement.total` and can't be edited. **Tap to Pay** posts line items that mirror the agreement: `items[0]` carries the price, the other items are $0, then the fees. The backend approves the request and the app pays it. **Add line item** posts the same lines plus the extra one, the backend blocks it, and the terminal waits. If the buyer approved an amendment, Tap to Pay charges the already-approved request.
 - **Glasses:** `AppModel.glasses` is a `GlassesFanOut`: every cue goes to the `PhoneTeleprompterDisplay` (always on, fallback + projector mirror) **and** to `MetaGlassesDisplay` (Ray-Ban Meta Display, when connected). B3's "ON GLASSES" card mirrors the teleprompter's `currentCue`. A blocked charge overrides the coaching cue with a red alert. See "Meta Ray-Ban Display glasses" below.
 - **Buyer home and history:** B1 is the root of buyer mode. B2 and B7 push on top of it. While a session runs it takes over the screen; **Home** (top left) steps back to B1 without ending it, and the **Active session** card resumes it. If this phone has no session, the card offers the newest unpaid backend session from the last 6 hours, so a relaunch can re-attach. Totals and history come from `GET /sessions` (`final_price`, `savings`, `blocked_total`, `paid_at`); a purchase is a session with status `paid`. Deal Detail loads `GET /sessions/:id` and `GET /sessions/:id/dispute-pack`. The pack is pretty-printed into a temp `DEAL-dispute-pack-<id>.json` and shared with `ShareLink`. B6 **Done** returns the buyer to B1, and S5 **Done** still goes to the mode picker.
+- **Marketplace:**
+  - `POST /listings/parse` takes `{url}`, `{text}` (pasted listing text) or `{image_base64}` (a screenshot from PhotosPicker). Images are downscaled to 1280 px and sent as JPEG at quality 0.7. If the parse call fails, "Use demo values" falls back to a local copy of the demo bike so the demo still runs.
+  - B2 sends the listing with `POST /sessions` (its title and price follow any edits you make). B3 reads `session.listing`, and keeps the B2 copy in case the backend doesn't echo it.
+  - Check condition (toolbar camera icon) is shown only when the session has a listing, because the backend returns 409 without one. The camera is offered only when one exists, so the Simulator shows PhotosPicker plus a sample observation. Results come from the response and from `session.condition_checks[]`. The cue event (`kind: "condition_check"`) is added to the transcript straight away, styled as a check rather than speech, and goes to the glasses like any other cue.
+  - Scripted mode plays `marketplace_bike` for Marketplace sessions, `car_accord` for car and `pawn_guitar` for pawn shop.
+  - B6 and S5 lead with `VerifiedHandoffCard` for Marketplace sessions (category `marketplace` or a listing is attached).
 - **Live mic:** turn off Scripted mode in B3, choose who is speaking, and tap the mic. Each phrase (split at pauses) is posted to `POST /sessions/:id/events`. You can also type lines.
 
 ## Meta Ray-Ban Display glasses
@@ -108,7 +139,9 @@ backend first (`cd backend && npm run dev`), then:
 xcodebuild test -project DEAL.xcodeproj -scheme DEAL -destination 'platform=iOS Simulator,name=iPhone 18 Pro'
 ```
 
-- `testBuyerFlow`: mode picker → B1 → Start Negotiation → B2 (demo values) → join QR → B3 with Play script → Lock Deal → B4 Confirm → (API: seller confirms, adds the $1,200 protection package) → B5 → Reject → (API: agreed charge + pay) → B6 → Done → B1 → Purchase History (B7) → the new deal's Deal Detail → Export Dispute Pack (share sheet).
+- `testBuyerFlow` (car): mode picker → B1 → Start Negotiation → B2 (Car demo) → join QR → B3 with Play script → Lock Deal → B4 Confirm → (API: seller confirms, adds the $1,200 protection package) → B5 → Reject → (API: agreed charge + pay) → B6 → Done → B1 → Purchase History (B7) → the new deal's Deal Detail → Export Dispute Pack (share sheet).
+- `testMarketplaceBuyerFlow`: B1 → B2 Use demo values (listing import, $650 card) → Start Session → B3 (listing claims, Play `marketplace_bike`) → Check condition with the sample observation → discrepancy card pinned in B3 → Lock Deal → B4 Confirm → (API: seller confirms at $520, adds a $20 "gas fee") → B5 → Reject → (API: agreed charge + pay) → B6 "Payment verified" → Done → B1. Shots `M-B2-import`, `M-B3-live`, `M-B3-condition-sheet`, `M-B3-condition`, `M-B5-gas-blocked`, `M-B6-verified`.
+- `testMarketplaceSellerFlow`: (API: create a marketplace session with a listing, play `marketplace_bike`, draft, buyer confirms) → S1 → S3 Confirm → S4 $520.00 → Add line item (pre-filled "gas fee" $20) → waiting with $540.00 → (API: buyer rejects) → Tap to Pay → S5 "Payment verified · Hand over the item". Shots `M-S4-terminal`, `M-S4-gas-waiting`, `M-S5-verified`.
 - `testSellerFlow`: (API: create session) → S1 type code → (API: play script with 250 ms spacing, draft, buyer confirms) → S2 → S3 Confirm → S4 → Add line item → "Waiting for buyer approval" with $35,800.00 → (API: buyer rejects) → Tap to Pay → S5.
 - Every step attaches a screenshot to the `.xcresult`. Export them with `xcrun xcresulttool export attachments --path <bundle>.xcresult --output-path <dir>`.
 - With Xcode 27.1, `xcodebuild test` sometimes keeps running after it prints `Test Suite 'All tests' passed`. When that happens, the results are already final and you can stop it.
@@ -125,13 +158,14 @@ xcodebuild test -project DEAL.xcodeproj -scheme DEAL -destination 'platform=iOS 
 | `xcodebuild build` for a generic iOS device, `CODE_SIGNING_ALLOWED=NO` | ✅ |
 | `DEALUITests` on the iPhone 18 Pro Simulator (iOS 27.1) against the mock backend | ✅ both pass (buyer about 2 min, which is real script pacing; seller about 35 s) |
 | `DEALUITests` with B1 Home and B7 History / Deal Detail / dispute pack share, iPhone 17e Simulator | ✅ both pass (buyer 162 s, seller 34 s) |
+| Marketplace: listing import, condition check, `marketplace_bike`, $20 gas fee blocked, verified handoff on B6 and S5. All 4 `DEALUITests` on the iPhone 18 Pro Simulator (iOS 27.1) against the mock backend | ✅ all pass (car buyer 162 s, marketplace buyer 104 s, marketplace seller 32 s, car seller 34 s); build has 0 warnings |
 
 | Meta glasses: `MWDAT` 1.0.1 resolves, app builds; MockDeviceKit display session connects in the Simulator and renders the standby and cue cards | ✅ (screenshots checked by hand; not an automated test, because the live preview keeps XCUITest from ever seeing the app idle) |
 
 **Still not verified:**
 - Real Ray-Ban Meta Display hardware: registration through Meta AI, the `deal://` callback, Bluetooth/Wi-Fi link, back-gesture reattach, ~25 s sleep, battery over a 5+ minute session.
 - Signing and running on a physical iPhone. It needs a Team (`DEVELOPMENT_TEAM` in `project.yml`, or Signing & Capabilities in Xcode).
-- Camera QR scanning, the mic/speech permission flow and SFSpeechRecognizer behavior. The Simulator has no camera, and the tests use typed join codes and scripted mode.
+- Camera QR scanning, the condition-check camera (`CameraPicker`), the paste button and the screenshot import through PhotosPicker, the mic/speech permission flow and SFSpeechRecognizer behavior. The Simulator has no camera, and the tests use typed join codes and scripted mode.
 - Haptics and idle-timer behavior
 - Realtime against a real Supabase project. The tests use the default 1 s polling.
 

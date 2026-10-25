@@ -33,6 +33,20 @@ final class SessionStore {
 
     var syncDescription: String { sync.modeDescription }
 
+    // Marketplace
+    /// The listing imported in B2, in case the backend doesn't echo `session.listing`.
+    var fallbackListing: Listing?
+    var listing: Listing? { state.listing ?? fallbackListing }
+    var isMarketplace: Bool { state.isMarketplace || fallbackListing != nil }
+    /// Condition mismatches found on this phone (B3 "Check condition"), newest first.
+    private(set) var localDiscrepancies: [Discrepancy] = []
+    /// Every known mismatch: this phone's checks plus any the backend persisted, newest first.
+    var discrepancies: [Discrepancy] {
+        var seen = Set<String>()
+        return (localDiscrepancies + state.storedDiscrepancies.reversed()).filter { seen.insert($0.id).inserted }
+    }
+    private(set) var isCheckingCondition = false
+
     init(role: Speaker, initial: SessionState, api: APIClient, sync: SessionSync, glasses: GlassesDisplay?) {
         self.role = role
         self.state = initial
@@ -102,6 +116,25 @@ final class SessionStore {
         let id = scriptID ?? session.category.defaultScriptID
         let result = await perform { try await api.playScript(sessionID: session.id, scriptID: id) }
         if result != nil { requestedScript = true }
+    }
+
+    /// B3 "Check condition". Errors are thrown back to the sheet instead of the session banner.
+    func checkCondition(observation: String?, imageBase64: String?) async throws -> ConditionCheckResult {
+        let text = observation?.trimmingCharacters(in: .whitespacesAndNewlines)
+        isCheckingCondition = true
+        defer { isCheckingCondition = false }
+        let result = try await api.conditionCheck(sessionID: session.id,
+                                                  observation: (text?.isEmpty ?? true) ? nil : text,
+                                                  imageBase64: imageBase64)
+        let existing = Set(localDiscrepancies.map(\.id))
+        localDiscrepancies.insert(contentsOf: result.discrepancies.filter { !existing.contains($0.id) }, at: 0)
+        // Show the inserted cue event right away (on B3 and the glasses); the next sync confirms it.
+        if let event = result.event, !event.id.isEmpty, !state.events.contains(where: { $0.id == event.id }) {
+            state.events.append(event)
+            pushGlasses()
+        }
+        sync.refreshNow()
+        return result
     }
 
     func postTranscriptLine(_ text: String, speaker: Speaker) async {

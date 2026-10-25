@@ -79,6 +79,7 @@ enum DealCategory: String, Codable, Sendable, CaseIterable, Identifiable {
     var defaultScriptID: String {
         switch self {
         case .pawnShop: "pawn_guitar"
+        case .marketplace: "marketplace_bike"
         default: "car_accord"
         }
     }
@@ -164,6 +165,10 @@ struct Session: Codable, Sendable, Identifiable, Hashable {
     var paidAt: Date?
     var blockedTotal: Int?
     var savings: Int?
+    /// Imported Marketplace listing (`POST /sessions` `listing`), echoed back by the backend.
+    var listing: Listing?
+    /// `POST /sessions/:id/condition-check` results, oldest first.
+    var conditionChecks: [ConditionCheckResult]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -185,6 +190,8 @@ struct Session: Codable, Sendable, Identifiable, Hashable {
         paidAt = c.decodeFlexibleDateIfPresent(forKey: .paidAt)
         blockedTotal = try c.decodeLossyIntIfPresent(forKey: .blockedTotal)
         savings = try c.decodeLossyIntIfPresent(forKey: .savings)
+        listing = try? c.decodeIfPresent(Listing.self, forKey: .listing)
+        conditionChecks = (try? c.decodeIfPresent([ConditionCheckResult].self, forKey: .conditionChecks)) ?? []
     }
 }
 
@@ -205,6 +212,10 @@ struct DealEvent: Codable, Sendable, Identifiable, Hashable {
     var cueDetail: String?
     var statusColor: StatusColor
     var scriptLineId: String?
+    /// `speech` (a transcript line) or `condition_check` (a cue from B3 "Check condition").
+    var kind: String?
+
+    var isConditionCheck: Bool { kind == "condition_check" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -222,6 +233,7 @@ struct DealEvent: Codable, Sendable, Identifiable, Hashable {
         cueDetail = try c.decodeIfPresent(String.self, forKey: .cueDetail)
         statusColor = (try? c.decodeIfPresent(StatusColor.self, forKey: .statusColor)) ?? .unknown
         scriptLineId = try c.decodeLossyStringIfPresent(forKey: .scriptLineId)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
     }
 }
 
@@ -431,11 +443,33 @@ struct SessionState: Codable, Sendable, Hashable {
     var receipt: Receipt?
     /// Scripted-mode progress (backend extra; nil when no script has been played).
     var script: ScriptRun?
+    /// Tolerated if the backend puts the listing at the top level instead of `session.listing`.
+    var topLevelListing: Listing?
+    /// Tolerated if the backend persists condition checks (`condition_checks` / `discrepancies`).
+    var serverDiscrepancies: [Discrepancy]
 
     init(session: Session, events: [DealEvent] = [], agreement: Agreement? = nil,
          paymentRequests: [PaymentRequest] = [], receipt: Receipt? = nil, script: ScriptRun? = nil) {
         self.session = session; self.events = events; self.agreement = agreement
         self.paymentRequests = paymentRequests; self.receipt = receipt; self.script = script
+        self.topLevelListing = nil; self.serverDiscrepancies = []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case session, events, agreement, paymentRequests, receipt, script
+        case topLevelListing = "listing"
+        case serverDiscrepancies = "discrepancies"
+        case conditionChecks
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(session, forKey: .session)
+        try c.encode(events, forKey: .events)
+        try c.encodeIfPresent(agreement, forKey: .agreement)
+        try c.encode(paymentRequests, forKey: .paymentRequests)
+        try c.encodeIfPresent(receipt, forKey: .receipt)
+        try c.encodeIfPresent(script, forKey: .script)
     }
 
     init(from decoder: Decoder) throws {
@@ -446,6 +480,19 @@ struct SessionState: Codable, Sendable, Hashable {
         paymentRequests = try c.decodeIfPresent([PaymentRequest].self, forKey: .paymentRequests) ?? []
         receipt = try c.decodeIfPresent(Receipt.self, forKey: .receipt)
         script = try? c.decodeIfPresent(ScriptRun.self, forKey: .script)
+        topLevelListing = try? c.decodeIfPresent(Listing.self, forKey: .topLevelListing)
+        serverDiscrepancies = Self.decodeDiscrepancies(c)
+    }
+
+    /// `discrepancies: [...]`, or `condition_checks: [{discrepancies: [...]}]` / `[Discrepancy]`.
+    private static func decodeDiscrepancies(_ c: KeyedDecodingContainer<CodingKeys>) -> [Discrepancy] {
+        if let list = try? c.decodeIfPresent([Discrepancy].self, forKey: .serverDiscrepancies) { return list }
+        if let checks = try? c.decodeIfPresent([ConditionCheckResult].self, forKey: .conditionChecks) {
+            let nested = checks.flatMap(\.discrepancies)
+            if !nested.isEmpty { return nested }
+        }
+        if let flat = try? c.decodeIfPresent([Discrepancy].self, forKey: .conditionChecks) { return flat }
+        return []
     }
 }
 
@@ -506,6 +553,8 @@ struct CreateSessionBody: Encodable, Sendable {
     var targetPrice: Int
     var maxBudget: Int
     var style: String
+    /// Imported Marketplace listing (optional).
+    var listing: Listing? = nil
 }
 
 struct JoinSessionBody: Encodable, Sendable { var joinCode: String }

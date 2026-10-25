@@ -16,6 +16,7 @@ struct LiveSessionView: View {
     @State private var paused = false
     @State private var typedLine = ""
     @State private var didAutoShowJoin = false
+    @State private var showConditionCheck = false
 
     var body: some View {
         let state = store.state
@@ -52,6 +53,11 @@ struct LiveSessionView: View {
         .dealKeepAwake()
         .toolbar {
             ToolbarItemGroup(placement: .dealTrailing) {
+                // Needs the session's listing: the backend compares against its condition claims.
+                if store.listing != nil {
+                    Button { showConditionCheck = true } label: { Image(systemName: "camera.viewfinder") }
+                        .accessibilityLabel("Check condition")
+                }
                 Button { showTeleprompter = true } label: { Image(systemName: "eyeglasses") }
                     .accessibilityLabel("Open teleprompter")
                 Button { showJoinCode = true } label: { Image(systemName: "qrcode") }
@@ -64,6 +70,9 @@ struct LiveSessionView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showJoinCode = false } } }
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showConditionCheck) {
+            ConditionCheckSheet(store: store)
         }
         .sheet(item: $fixingTerm) { term in
             FixTermSheet(term: term) { correction in
@@ -92,10 +101,18 @@ struct LiveSessionView: View {
         VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             header(state.session, compact: compact)
             offerSection(state, compact: compact)
+            if let latest = store.discrepancies.first {
+                Button { showConditionCheck = true } label: {
+                    DiscrepancyCard(discrepancy: latest, compact: true, moreCount: store.discrepancies.count - 1)
+                }
+                .buttonStyle(.plain)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
             GlassesCueCard(cue: model.teleprompter.currentCue, displayName: model.glasses.name)
                 .onTapGesture { showTeleprompter = true }
                 .animation(.default, value: model.teleprompter.currentCue?.text)
         }
+        .animation(.default, value: store.discrepancies.first?.id)
         .padding(.horizontal)
         .padding(.top, compact ? 6 : 10)
         .padding(.bottom, compact ? 8 : 12)
@@ -123,6 +140,17 @@ struct LiveSessionView: View {
                 Text("Max \(Money.format(session.maxBudget)) · \(session.style.capitalized) · Code \(session.joinCode)")
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            // Marketplace: what the listing claims, one scrolling line; contradicted claims turn red.
+            if let claims = store.listing?.conditionClaims, !claims.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Listing says").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .fixedSize()
+                    ClaimChips(claims: claims, flagged: Set(store.discrepancies.map(\.claim)))
+                }
+                .padding(.top, 4)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("listingClaims")
             }
         }
     }
@@ -184,7 +212,11 @@ struct LiveSessionView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             ForEach(state.sortedEvents) { event in
-                TranscriptLineView(event: event)
+                if event.isConditionCheck {
+                    ConditionCheckLineView(event: event)
+                } else {
+                    TranscriptLineView(event: event)
+                }
             }
             if !store.partialTranscript.isEmpty {
                 Text("\(store.micSpeaker.displayName): \(store.partialTranscript)…")

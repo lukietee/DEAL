@@ -21,6 +21,8 @@ enum APIError: LocalizedError, Sendable {
 struct APIClient: Sendable {
     var baseURL: URL
     var session: URLSession = .shared
+    /// Screenshot / photo uploads (listing parse, condition check) can take a while with real AI.
+    static let uploadTimeout: TimeInterval = 45
 
     static let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -109,6 +111,19 @@ struct APIClient: Sendable {
                        body: Optional<Empty>.none, unwrap: "receipt")
     }
 
+    /// B2 "Import listing": a Marketplace link, pasted listing text, or a screenshot (base64 JPEG).
+    func parseListing(url: String? = nil, text: String? = nil, imageBase64: String? = nil) async throws -> Listing {
+        try await send("POST", "/listings/parse",
+                       body: ParseListingBody(url: url, text: text, imageBase64: imageBase64), unwrap: "listing")
+    }
+
+    /// B3 "Check condition": what the buyer sees (typed and/or a photo) vs the listing's claims.
+    /// The backend also inserts a cue event, which reaches the glasses through the normal sync.
+    func conditionCheck(sessionID: String, observation: String?, imageBase64: String?) async throws -> ConditionCheckResult {
+        try await send("POST", "/sessions/\(sessionID.urlPathEscaped)/condition-check",
+                       body: ConditionCheckBody(observation: observation, imageBase64: imageBase64))
+    }
+
     func comparables(category: DealCategory) async throws -> [Comparable] {
         let (data, _) = try await raw("GET", "/comparables/\(category.rawValue)", body: Optional<Empty>.none, expectSuccess: true)
         return try Self.decodeComparables(data)
@@ -168,7 +183,8 @@ struct APIClient: Sendable {
         guard let url = URL(string: baseURL.absoluteString + path) else {
             throw APIError.invalidURL(baseURL.absoluteString + path)
         }
-        var request = URLRequest(url: url, timeoutInterval: Config.requestTimeout)
+        let isUpload = path == "/listings/parse" || path.hasSuffix("/condition-check")
+        var request = URLRequest(url: url, timeoutInterval: isUpload ? Self.uploadTimeout : Config.requestTimeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // Skips ngrok's browser interstitial on free tunnels.

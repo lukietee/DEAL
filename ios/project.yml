@@ -60,7 +60,7 @@ targets:
         UIRequiresFullScreen: true
         NSMicrophoneUsageDescription: "DEAL listens to your negotiation to transcribe offers and coach you in real time."
         NSSpeechRecognitionUsageDescription: "DEAL transcribes the conversation on-device to track offers, fees and promises."
-        NSCameraUsageDescription: "DEAL uses the camera to scan the buyer's join QR code."
+        NSCameraUsageDescription: "DEAL uses the camera to scan the buyer's join QR code and to photograph an item so its condition can be checked against the listing."
         NSLocalNetworkUsageDescription: "DEAL connects to the DEAL backend on your local network and to your Meta glasses over Wi-Fi."
         # --- Meta Wearables Device Access Toolkit (Ray-Ban Meta Display output) ---
         # URL scheme Meta AI uses to call DEAL back after registration (keep in sync with MWDAT.AppLinkURLScheme).

@@ -1,10 +1,12 @@
 import SwiftUI
+import PhotosUI
 
-/// B2. New Negotiation: category, item, asking/target/max, style, comparables, Start Session.
+/// B2. New Negotiation: import a Marketplace listing (link or screenshot), category, item,
+/// asking/target/max, style, comparables, Start Session.
 struct NewNegotiationView: View {
     @Environment(AppModel.self) private var model
 
-    @State private var category: DealCategory = .car
+    @State private var category: DealCategory = .marketplace
     @State private var item = ""
     @State private var asking = ""
     @State private var target = ""
@@ -16,6 +18,16 @@ struct NewNegotiationView: View {
     @State private var loadingComparables = false
     @State private var isStarting = false
     @State private var error: String?
+
+    // Import listing
+    @State private var listingLink = ""
+    @State private var photoItem: PhotosPickerItem?
+    @State private var listing: Listing?
+    @State private var listingNote: String?
+    @State private var isImporting = false
+    @State private var importError: String?
+    /// Bumped by every fill/import so a slow import can't overwrite a newer choice (e.g. Car demo).
+    @State private var fillGeneration = 0
 
     private var askingCents: Int? { Money.parseDollars(asking) }
     private var targetCents: Int? { Money.parseDollars(target) }
@@ -31,6 +43,8 @@ struct NewNegotiationView: View {
 
     var body: some View {
         Form {
+            importSection
+
             Section("Category") {
                 Picker("Category", selection: $category) {
                     ForEach(DealCategory.allCases) { c in
@@ -38,12 +52,17 @@ struct NewNegotiationView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                Button("Use demo values") { fillDemo() }
-                    .font(.footnote)
+                HStack {
+                    Button("Use demo values") { Task { await fillMarketplaceDemo() } }
+                    Spacer()
+                    Button { fillCarDemo() } label: { Label("Car demo", systemImage: "car.fill") }
+                }
+                .buttonStyle(.borderless)
+                .font(.footnote)
             }
 
             Section("What are you buying?") {
-                TextField("Item (e.g. 2023 Honda Accord EX)", text: $item)
+                TextField("Item (e.g. used road bike)", text: $item)
                 moneyField("Asking price", text: $asking)
                 moneyField("Target price", text: $target)
                 moneyField("Maximum budget", text: $maxBudget)
@@ -105,7 +124,130 @@ struct NewNegotiationView: View {
         }
         .navigationTitle("New Negotiation")
         .task(id: category) { await loadComparables() }
-        .onAppear { if item.isEmpty { fillDemo() } }
+        .task { if item.isEmpty && listing == nil { await fillMarketplaceDemo() } }
+        .onChange(of: photoItem) { _, newItem in
+            guard let newItem else { return }
+            Task { await importScreenshot(newItem) }
+        }
+    }
+
+    // MARK: Import listing
+
+    private var importSection: some View {
+        Section {
+            HStack(spacing: 8) {
+                TextField("Paste a Marketplace link", text: $listingLink)
+                    .dealURLEntry()
+                    .onSubmit { Task { await importLink() } }
+                    .accessibilityIdentifier("listingLink")
+                PasteButton(payloadType: String.self) { strings in
+                    guard let first = strings.first else { return }
+                    Task { @MainActor in
+                        listingLink = first.trimmingCharacters(in: .whitespacesAndNewlines)
+                        await importLink()
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .buttonBorderShape(.capsule)
+            }
+            HStack {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Label("Listing screenshot", systemImage: "photo.on.rectangle")
+                }
+                Spacer()
+                Button {
+                    Task { await importLink() }
+                } label: {
+                    if isImporting { ProgressView() } else { Text("Import") }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(listingLink.trimmingCharacters(in: .whitespaces).isEmpty || isImporting)
+            }
+            .buttonStyle(.borderless)
+            if isImporting {
+                Label("Reading listing…", systemImage: "text.viewfinder")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let importError {
+                Text(importError).font(.footnote).foregroundStyle(.red)
+            }
+            if let listing {
+                ListingCard(listing: listing, note: listingNote) { clearListing() }
+            }
+        } header: {
+            Text("Import listing")
+        } footer: {
+            Text("Paste a Facebook Marketplace link or pick a screenshot. DEAL reads the price and what the seller claims about condition, then checks those claims at the meetup.")
+        }
+    }
+
+    /// A link goes as `url`; anything else (pasted listing text) goes as `text`.
+    private func importLink() async {
+        let raw = listingLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+        let looksLikeURL = raw.lowercased().hasPrefix("http") || raw.contains("facebook.com") || raw.contains("fb.me")
+        await runImport(note: nil) {
+            try await model.api.parseListing(url: looksLikeURL ? raw : nil, text: looksLikeURL ? nil : raw)
+        }
+    }
+
+    private func importScreenshot(_ item: PhotosPickerItem) async {
+        defer { photoItem = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let base64 = ImageEncoding.jpegBase64(from: data) else {
+            importError = "Couldn't read that image."
+            return
+        }
+        await runImport(note: "Read from screenshot") {
+            try await model.api.parseListing(imageBase64: base64)
+        }
+    }
+
+    @discardableResult
+    private func runImport(note: String?, fallback: Listing? = nil, _ op: () async throws -> Listing) async -> Bool {
+        fillGeneration += 1
+        let generation = fillGeneration
+        isImporting = true
+        importError = nil
+        defer { if generation == fillGeneration { isImporting = false } }
+        do {
+            let parsed = try await op()
+            guard generation == fillGeneration else { return false }
+            apply(parsed, note: note)
+            return true
+        } catch {
+            guard generation == fillGeneration else { return false }
+            if let fallback {
+                apply(fallback, note: "Offline demo listing (backend couldn't parse: \(error.localizedDescription))")
+                return true
+            }
+            importError = "Couldn't import the listing. \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Prefills the form from a listing: Marketplace, item, asking, and target/max defaults.
+    private func apply(_ parsed: Listing, note: String?) {
+        listing = parsed
+        listingNote = note
+        category = parsed.isFacebookMarketplace ? .marketplace : (DealCategory(rawValue: parsed.category) ?? .marketplace)
+        item = parsed.title
+        if parsed.askingPrice > 0 {
+            let d = MarketplaceDemo.defaults(asking: parsed.askingPrice)
+            asking = Money.editableString(parsed.askingPrice)
+            target = Money.editableString(d.target)
+            maxBudget = Money.editableString(d.max)
+        }
+        style = .firm
+    }
+
+    private func clearListing() {
+        fillGeneration += 1
+        listing = nil
+        listingNote = nil
+        importError = nil
+        isImporting = false
     }
 
     private func moneyField(_ title: String, text: Binding<String>) -> some View {
@@ -120,15 +262,29 @@ struct NewNegotiationView: View {
         }
     }
 
-    private func fillDemo() {
-        switch category {
-        case .pawnShop:
+    /// "Use demo values": the flagship Marketplace bike, through a canned import of the demo link.
+    /// Pawn Shop keeps its own demo values.
+    private func fillMarketplaceDemo() async {
+        if category == .pawnShop {
+            clearListing()
             item = "Fender Player Stratocaster (used)"
             asking = "650"; target = "500"; maxBudget = "575"
-        default:
-            item = "2023 Honda Accord EX"
-            asking = "38000"; target = "34500"; maxBudget = "36000"
+            style = .firm
+            return
         }
+        listingLink = MarketplaceDemo.listingURL
+        await runImport(note: "Demo listing", fallback: MarketplaceDemo.offlineBike) {
+            try await model.api.parseListing(url: MarketplaceDemo.listingURL)
+        }
+    }
+
+    /// "Car demo": the 2023 Honda Accord scenario (no listing).
+    private func fillCarDemo() {
+        clearListing()
+        listingLink = ""
+        category = .car
+        item = "2023 Honda Accord EX"
+        asking = "38000"; target = "34500"; maxBudget = "36000"
         style = .firm
     }
 
@@ -144,6 +300,15 @@ struct NewNegotiationView: View {
         }
     }
 
+    /// The listing as negotiated: edits to the item name / asking price win over the parsed values.
+    private func listingForSession(_ l: Listing) -> Listing {
+        var l = l
+        let trimmed = item.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty { l.title = trimmed }
+        if let a = askingCents { l.askingPrice = a }
+        return l
+    }
+
     private func start() async {
         guard validationMessage == nil, let a = askingCents, let t = targetCents, let m = maxCents else { return }
         isStarting = true
@@ -151,9 +316,11 @@ struct NewNegotiationView: View {
         do {
             let session = try await model.api.createSession(CreateSessionBody(
                 category: category.rawValue, item: item.trimmingCharacters(in: .whitespaces),
-                askingPrice: a, targetPrice: t, maxBudget: m, style: style.rawValue))
+                askingPrice: a, targetPrice: t, maxBudget: m, style: style.rawValue,
+                listing: listing.map(listingForSession)))
             error = nil
-            _ = model.makeStore(role: .buyer, session: session)
+            let store = model.makeStore(role: .buyer, session: session)
+            if session.listing == nil, let listing { store.fallbackListing = listingForSession(listing) }
         } catch {
             self.error = error.localizedDescription
         }
