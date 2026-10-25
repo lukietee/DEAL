@@ -11,6 +11,7 @@ import { agreementRoutes } from "./routes/agreements.js";
 import { eventRoutes } from "./routes/events.js";
 import { listingRoutes } from "./routes/listings.js";
 import { paymentRoutes } from "./routes/payments.js";
+import { researchRoutes } from "./routes/research.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import type { Store } from "./store/index.js";
 import { MemoryStore } from "./store/memory.js";
@@ -20,6 +21,7 @@ export interface AppDeps {
   store?: Store;
   ai?: Ai;
   payments?: Payments;
+  research?: ResearchRunner;
   logger?: boolean;
 }
 
@@ -32,7 +34,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     (cfg.supabaseUrl && cfg.supabaseServiceRoleKey ? new SupabaseStore(cfg.supabaseUrl, cfg.supabaseServiceRoleKey) : new MemoryStore());
   const ai = deps.ai ?? createAi(cfg, app.log);
   const payments = deps.payments ?? createPayments(cfg.stripeSecretKey);
-  const research = new ResearchRunner({
+  const research = deps.research ?? new ResearchRunner({
     mockMode: ai.kind !== "claude",
     client: ai.kind === "claude" ? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 }) : null,
     model: cfg.researchModel,
@@ -67,6 +69,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
   agreementRoutes(app, deal);
   paymentRoutes(app, deal);
   listingRoutes(app, deal);
+  researchRoutes(app, deal);
 
   app.addHook("onClose", async () => deal.stopAll());
   return { app, deal };

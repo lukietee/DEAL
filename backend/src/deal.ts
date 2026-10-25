@@ -1,14 +1,17 @@
 // Core DEAL business logic, independent of HTTP. Routes are thin wrappers around this.
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Ai } from "./ai/index.js";
+import { cueResearchFrom, type Ai } from "./ai/index.js";
 import type { Config } from "./config.js";
 import { getScript, getScriptFile } from "./content.js";
 import { computeFingerprint, fingerprintPayload, shortFingerprint, verifyFingerprint } from "./fingerprint.js";
 import { checkPaymentRequest, matchLineItem, sumLineItems } from "./mismatch.js";
-import { type ConditionCheck, type ConditionInput, type Discrepancy, type Listing, type ListingInput } from "./listing.js";
+import {
+  ConditionCheckError, LISTING_UNREADABLE, ListingUnreadableError,
+  type ConditionCheck, type ConditionInput, type Discrepancy, type Listing, type ListingInput,
+} from "./listing.js";
 import { formatCentsShort } from "./money.js";
 import type { Payments } from "./payments/index.js";
-import { ResearchRunner } from "./research.js";
+import { ResearchRunner, type PreviewInput, type ResearchPreview } from "./research.js";
 import type { Store } from "./store/index.js";
 import type {
   Agreement, CueExtraction, DealEvent, EventKind, Fee, LineItem, PaymentRequest, Receipt, Session, Speaker, Term,
@@ -176,7 +179,7 @@ export class Deal {
     return this.withLock(sessionId, async () => {
       const session = await this.mustSession(sessionId);
       const events = await this.store.listEvents(sessionId);
-      const extraction = opts.extraction ?? (await this.ai.cue({ session, recent: events, speaker, text, scriptId: opts.scriptId }));
+      const extraction = opts.extraction ?? (await this.ai.cue({ session, recent: events, speaker, text, scriptId: opts.scriptId, research: cueResearchFrom(this.research.research(sessionId)) }));
       const event: DealEvent = {
         id: newId("evt"),
         session_id: sessionId,
@@ -210,7 +213,17 @@ export class Deal {
 
   /** POST /listings/parse: canned in mock mode, Claude (text or screenshot) in real mode. Never scrapes. */
   async parseListing(input: ListingInput): Promise<Listing> {
-    return this.ai.parseListing(input);
+    try {
+      return await this.ai.parseListing(input);
+    } catch (err) {
+      // Real mode only (the mock never throws): 422 {error} so the app asks for text or a screenshot instead.
+      throw new HttpError(422, err instanceof ListingUnreadableError ? err.userMessage : LISTING_UNREADABLE);
+    }
+  }
+
+  /** POST /research/preview: one comparable-listings agent before any session exists (blocking). */
+  async researchPreview(input: PreviewInput): Promise<ResearchPreview> {
+    return this.research.preview(input);
   }
 
   /**
@@ -221,7 +234,12 @@ export class Deal {
   async conditionCheck(sessionId: string, input: ConditionInput): Promise<{ discrepancies: Discrepancy[]; event: DealEvent }> {
     const session = await this.mustSession(sessionId);
     if (!session.listing) throw new HttpError(409, "session has no listing; attach one via POST /sessions {listing} (from POST /listings/parse)");
-    const discrepancies = await this.ai.conditionCheck(session.listing, input);
+    let discrepancies: Discrepancy[];
+    try {
+      discrepancies = await this.ai.conditionCheck(session.listing, input);
+    } catch (err) {
+      throw new HttpError(502, err instanceof ConditionCheckError ? err.message : "Condition check failed. Try again.");
+    }
     const total = discrepancies.reduce((s, d) => s + d.suggested_discount, 0);
     const first = discrepancies[0];
     const extraction: CueExtraction = {

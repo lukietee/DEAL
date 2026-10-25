@@ -58,6 +58,19 @@ export interface ConditionCheck {
   event_id: string;
 }
 
+export const URL_UNREADABLE = "Couldn't read that link. Paste the listing text or a screenshot instead.";
+export const LISTING_UNREADABLE = "Couldn't read that listing. Paste the full listing text or a clearer screenshot.";
+
+/** Real mode: the listing couldn't be read (bad link, login wall, model failure). Mapped to HTTP 422. */
+export class ListingUnreadableError extends Error {
+  constructor(public userMessage: string, public reason: string) {
+    super(`${userMessage} (${reason})`);
+  }
+}
+
+/** Real mode: the condition model failed. Mapped to HTTP 502. */
+export class ConditionCheckError extends Error {}
+
 export function isFacebookUrl(url: string | undefined): boolean {
   return !!url && /(^|\/\/|\.)(facebook\.com|fb\.com|fb\.me)(\/|$)/i.test(url);
 }

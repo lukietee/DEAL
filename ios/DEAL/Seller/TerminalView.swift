@@ -6,6 +6,7 @@ import SwiftUI
 /// payment request (agreement lines + the extra) which the backend blocks; the terminal then
 /// waits for the buyer. "Tap to Pay" runs a simulated contactless animation, then charges.
 struct TerminalView: View {
+    @Environment(AppModel.self) private var model
     var store: SessionStore
     @State private var showAddItem = false
     @State private var tapPhase: TapPhase = .idle
@@ -32,7 +33,8 @@ struct TerminalView: View {
         .animation(.easeInOut(duration: 0.25), value: isTapping)
         .dealKeepAwake()
         .sheet(isPresented: $showAddItem) {
-            AddLineItemSheet(prefill: state.isMarketplace ? ("gas fee", "20") : ("protection package", "1200"),
+            AddLineItemSheet(prefill: !model.settings.demoShortcuts ? ("", "")
+                                : state.isMarketplace ? ("gas fee", "20") : ("protection package", "1200"),
                              agreedTotal: state.terminalAmount) { label, amount in
                 Task { await store.addLineItem(label: label, amount: amount) }
             }
@@ -351,7 +353,7 @@ private struct ContactlessRings<Center: View>: View {
 
 /// S4 "+ Add line item" (e.g. "protection package", $1,200). The amount is the extra only;
 /// the agreed lines are included automatically.
-/// Marketplace sessions pre-fill the demo's "$20 for gas".
+/// With demo shortcuts on, Marketplace sessions pre-fill the demo's "$20 for gas"; otherwise empty.
 struct AddLineItemSheet: View {
     var agreedTotal: Int?
     var onAdd: (String, Int) -> Void

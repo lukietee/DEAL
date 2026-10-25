@@ -17,9 +17,12 @@ Rules:
 - Included items and promises use amount 0. A waived fee is a "fee" term with amount 0. Reuse the same label for the same term.
 - green: standing offer at/below target or a strong buyer move. yellow: a tactic is in play or the offer is between target and max. red: offer above max budget or a pressure tactic.
 - For monthly-payment framing, put the total-cost math in cue_detail.
+- market_research is LIVE web research run for this session by research agents (comparable listings, known issues, fair price):
+  their summaries, price ranges (cents) and top sources with prices. It is null until the first agent finishes. Use it to judge
+  whether an offer is fair and to cite a real comparable price in the cue; never invent comparables when it is null.
 - Never invent numbers that were not said.`;
 
-export function cueUserPrompt(session: Session, recent: DealEvent[], line: { speaker: string; text: string }, tactics: Tactic[], comparables: unknown): string {
+export function cueUserPrompt(session: Session, recent: DealEvent[], line: { speaker: string; text: string }, tactics: Tactic[], marketResearch: unknown): string {
   return JSON.stringify(
     {
       session: {
@@ -33,7 +36,7 @@ export function cueUserPrompt(session: Session, recent: DealEvent[], line: { spe
         current_offer_by: session.current_offer_by,
         listing_condition_claims: session.listing?.condition_claims ?? null,
       },
-      comparables,
+      market_research: marketResearch ?? null,
       tactics: tactics.map((t) => ({ id: t.id, name: t.name, hints: t.detection_hints, cue: t.cue_template, status: t.status })),
       recent_transcript: recent.slice(-10).map((e) => ({ speaker: e.speaker, text: e.text })),
       new_line: line,
@@ -97,3 +100,14 @@ You get the listing's condition_claims plus the buyer's observation and/or a pho
   }]
 }
 Rules: Only report real contradictions of a listed claim; [] if the item matches. ALL money is integer cents. Be conservative with discounts (typical repair or replacement cost).`;
+
+
+export const LISTING_URL_SYSTEM = `${LISTING_SYSTEM}
+You are given only a link. Use the web_fetch tool to read that exact URL (at most 2 fetches) and extract the listing from the page.
+If the page cannot be fetched, is a login wall / sign-in page / captcha, has been removed, or does not show a listing with both a title
+and a price, reply with ONLY {"error": "<short reason>"} instead. Never guess a listing from the URL alone.`;
+
+/** The URL must be in the user message: web_fetch only fetches URLs already present in the conversation. */
+export function listingUrlPrompt(url: string): string {
+  return `Read the marketplace listing at this URL and return the JSON object.\nURL: ${url}`;
+}

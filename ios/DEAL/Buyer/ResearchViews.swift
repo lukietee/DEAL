@@ -84,6 +84,30 @@ struct ResearchSource: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// `POST /research/preview` request: `{item, category, asking_price}` (cents).
+struct ResearchPreviewBody: Encodable, Sendable {
+    var item: String
+    var category: String
+    var askingPrice: Int?
+}
+
+/// `POST /research/preview` response:
+/// `{summary, price_low, price_high, sources: [{title, url, price, note, image_url}]}`, all optional.
+struct ResearchPreview: Decodable, Sendable, Hashable {
+    var summary: String?
+    var priceLow: Int?
+    var priceHigh: Int?
+    var sources: [ResearchSource]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: AnyKey.self)
+        summary = c.firstString(["summary"])
+        priceLow = c.firstInt(["priceLow"])
+        priceHigh = c.firstInt(["priceHigh"])
+        sources = (try? c.decode([ResearchSource].self, forKey: AnyKey("sources"))) ?? []
+    }
+}
+
 struct PhraseSuggestions: Codable, Sendable, Hashable {
     struct Phrase: Codable, Sendable, Hashable, Identifiable {
         var text: String

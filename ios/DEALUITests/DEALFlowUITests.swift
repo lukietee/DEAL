@@ -16,6 +16,12 @@ final class DEALFlowUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
+        // Demo shortcuts on: these tests drive the demo paths (Car demo, Play script, sample observation, prefills).
+        app.launchArguments += ["-DEALDemoShortcuts"]
+        // Optional: point the app at another backend (e.g. a mock on :3300) without changing the default.
+        if let url = ProcessInfo.processInfo.environment["DEAL_APP_BACKEND_URL"], !url.isEmpty {
+            app.launchArguments += ["-deal.backendURL", url]
+        }
         app.launch()
     }
 

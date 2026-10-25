@@ -11,7 +11,7 @@
 // State lives in memory on the Deal (like script runs) and is returned by GET /sessions/:id.
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { getComparables } from "./content.js";
+import { getComparables, normalizeCategory } from "./content.js";
 import { formatCentsShort as formatCents } from "./money.js";
 import type { DealEvent, Session } from "./types.js";
 
@@ -56,7 +56,9 @@ export interface Suggestions {
 type Logger = { warn: (obj: unknown, msg?: string) => void };
 const now = () => new Date().toISOString();
 
-const AGENTS: { id: ResearchAgent["id"]; title: string; goal: string }[] = [
+interface AgentSpec { id: ResearchAgent["id"]; title: string; goal: string }
+
+const AGENTS: AgentSpec[] = [
   {
     id: "comps",
     title: "Comparable listings",
@@ -87,7 +89,7 @@ const PhrasesOutput = z.object({
   phrases: z.array(z.object({ text: z.string(), why: z.string() })).min(1).max(3),
 });
 
-function newAgent(a: (typeof AGENTS)[number]): ResearchAgent {
+function newAgent(a: AgentSpec): ResearchAgent {
   return {
     id: a.id, title: a.title, status: "queued", activity: "Waiting to start", queries: [], sources: [], summary: null,
     price_low: null, price_high: null, started_at: null, finished_at: null, error: null,
@@ -156,6 +158,138 @@ export async function fetchPageImage(pageUrl: string, timeoutMs = 4000): Promise
   return result;
 }
 
+// ---------- one Claude research agent (web search) ----------
+
+export interface AgentContext {
+  item: string;
+  category: string;
+  asking_price: number | null; // cents
+  target_price: number | null; // cents
+  live: boolean; // true = mid-negotiation (session agents); false = before the meetup (preview)
+}
+
+/** Run one research agent with Claude + server-side web search, filling `agent` live as blocks stream in. */
+export async function runClaudeAgent(client: Anthropic, model: string, spec: AgentSpec, agent: ResearchAgent, ctx: AgentContext) {
+  agent.status = "searching";
+  agent.started_at = now();
+  agent.activity = "Planning searches";
+  const prompt = [
+    ctx.live
+      ? `You are one of three research agents helping a buyer who is negotiating in person, right now, for: ${ctx.item}.`
+      : `You are a research agent helping a buyer who is about to meet a seller in person to buy: ${ctx.item}.`,
+    [
+      `Asking price: ${ctx.asking_price != null ? formatCents(ctx.asking_price) : "unknown"}.`,
+      ctx.target_price != null ? `Buyer's target: ${formatCents(ctx.target_price)}.` : "",
+      `Category: ${ctx.category}.`,
+    ].filter(Boolean).join(" "),
+    ``,
+    `Your job: ${spec.goal}`,
+    ctx.live ? `Use web search (at most 3 searches). Be quick; the buyer is mid-conversation.` : `Use web search (at most 3 searches). Be quick; the buyer is waiting on this screen.`,
+    ``,
+    `Finish with ONLY a JSON object, no prose around it:`,
+    `{"summary": "<= 2 short sentences a buyer can act on", "price_low": <integer cents or null>, "price_high": <integer cents or null>,`,
+    ` "sources": [{"title": "...", "url": "<a page URL you actually found>", "price": <integer cents or null>, "note": "<= 8 words"}]}`,
+    `List up to 5 sources, best first. Prices are integer cents (e.g. $520 = 52000).`,
+  ].join("\n");
+
+  const stream = client.beta.messages.stream({
+    model,
+    max_tokens: 16000,
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+    output_config: { effort: "low" },
+    tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
+    messages: [{ role: "user", content: prompt }],
+  } as Anthropic.Beta.Messages.MessageCreateParamsStreaming);
+
+  // Live progress: each finished content block tells us what the agent just did.
+  stream.on("contentBlock", (block) => {
+    const b = block as unknown as { type: string; input?: { query?: string }; content?: unknown };
+    if (b.type === "server_tool_use" && b.input?.query) {
+      agent.queries.push(b.input.query);
+      agent.status = "searching";
+      agent.activity = `Searching "${b.input.query}"`;
+    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      const results = b.content as { type: string; title?: string; url?: string }[];
+      for (const r of results) {
+        if (r.type !== "web_search_result" || !r.url || agent.sources.some((s) => s.url === r.url)) continue;
+        agent.sources.push({ title: r.title ?? r.url, url: r.url, price: null, note: null, image_url: null });
+      }
+      agent.status = "reading";
+      agent.activity = `Reading ${agent.sources.length} pages`;
+    } else if (b.type === "text") {
+      agent.activity = "Writing summary";
+    }
+  });
+
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === "refusal") throw new Error("model declined the research request");
+  const text = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+  const out = ResearchOutput.parse(extractJson(text));
+
+  // The model's own picks go first (they carry price/note); keep other search hits after them.
+  const picked: ResearchSource[] = out.sources
+    .filter((s) => /^https?:\/\//.test(s.url))
+    .map((s) => ({ title: s.title, url: s.url, price: s.price ?? null, note: s.note ?? null, image_url: null }));
+  const rest = agent.sources.filter((s) => !picked.some((p) => p.url === s.url));
+  agent.sources = [...picked, ...rest].slice(0, 8);
+  agent.summary = out.summary;
+  agent.price_low = out.price_low ?? null;
+  agent.price_high = out.price_high ?? null;
+
+  agent.activity = "Pulling images";
+  await Promise.all(
+    agent.sources.slice(0, 4).map(async (s) => { s.image_url = await fetchPageImage(s.url); }),
+  );
+  agent.status = "done";
+  agent.activity = `${agent.queries.length} searches · ${agent.sources.length} sources`;
+  agent.finished_at = now();
+}
+
+// ---------- pre-session market check (POST /research/preview) ----------
+
+export interface PreviewInput {
+  item: string;
+  category?: string;
+  asking_price?: number; // cents
+}
+
+/** Contract for the iOS B2 screen. Keep these field names. */
+export interface ResearchPreview {
+  summary: string | null;
+  price_low: number | null; // cents
+  price_high: number | null; // cents
+  sources: ResearchSource[]; // {title, url, price, note, image_url}
+}
+
+export const MOCK_PREVIEW_DELAY_MS = 1500;
+
+type CompListing = { title: string; price: number; source?: string; note?: string; condition?: string };
+
+function comparableListings(category: string): CompListing[] {
+  const comps = (() => { try { return getComparables(category) ?? getComparables("other"); } catch { return null; } })();
+  return ((comps as { listings?: unknown[] } | null)?.listings ?? []) as CompListing[];
+}
+
+/** Mock preview: the category's illustrative comparables, in the preview shape. */
+export function mockPreview(category: string, askingPrice: number | null): ResearchPreview {
+  const listings = comparableListings(category);
+  const prices = listings.map((l) => l.price).sort((a, b) => a - b);
+  const low = prices[Math.floor(prices.length * 0.25)] ?? null;
+  const high = prices[Math.floor(prices.length * 0.75)] ?? null;
+  const asking = askingPrice != null && high != null && askingPrice > high ? ` Asking ${formatCents(askingPrice)} is above most of them.` : "";
+  return {
+    summary: listings.length
+      ? `${listings.length} similar listings run ${formatCents(prices[0]!)}–${formatCents(prices[prices.length - 1]!)} (illustrative).${asking}`
+      : null,
+    price_low: low,
+    price_high: high,
+    sources: listings.slice(0, 5).map((l, i) => ({
+      title: l.title, url: `https://example.com/demo-listing-${i + 1}`, price: l.price, note: l.note ?? l.condition ?? null, image_url: null,
+    })),
+  };
+}
+
 // ---------- research runner ----------
 
 export interface ResearchDeps {
@@ -207,77 +341,38 @@ export class ResearchRunner {
     return new Promise<void>((resolve) => { const t = setTimeout(() => { this.timers.delete(t); resolve(); }, ms); this.timers.add(t); });
   }
 
-  private async claudeAgent(session: Session, spec: (typeof AGENTS)[number], agent: ResearchAgent) {
-    const client = this.deps.client!;
-    agent.status = "searching";
-    agent.started_at = now();
-    agent.activity = "Planning searches";
-    const item = itemDescription(session);
-    const prompt = [
-      `You are one of three research agents helping a buyer who is negotiating in person, right now, for: ${item}.`,
-      `Asking price: ${formatCents(session.asking_price)}. Buyer's target: ${formatCents(session.target_price)}. Category: ${session.category}.`,
-      ``,
-      `Your job: ${spec.goal}`,
-      `Use web search (at most 3 searches). Be quick; the buyer is mid-conversation.`,
-      ``,
-      `Finish with ONLY a JSON object, no prose around it:`,
-      `{"summary": "<= 2 short sentences a buyer can act on", "price_low": <integer cents or null>, "price_high": <integer cents or null>,`,
-      ` "sources": [{"title": "...", "url": "<a page URL you actually found>", "price": <integer cents or null>, "note": "<= 8 words"}]}`,
-      `List up to 5 sources, best first. Prices are integer cents (e.g. $520 = 52000).`,
-    ].join("\n");
-
-    const stream = client.beta.messages.stream({
-      model: this.deps.model,
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      output_config: { effort: "low" },
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
-      messages: [{ role: "user", content: prompt }],
-    } as Anthropic.Beta.Messages.MessageCreateParamsStreaming);
-
-    // Live progress: each finished content block tells us what the agent just did.
-    stream.on("contentBlock", (block) => {
-      const b = block as unknown as { type: string; input?: { query?: string }; content?: unknown };
-      if (b.type === "server_tool_use" && b.input?.query) {
-        agent.queries.push(b.input.query);
-        agent.status = "searching";
-        agent.activity = `Searching "${b.input.query}"`;
-      } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
-        const results = b.content as { type: string; title?: string; url?: string }[];
-        for (const r of results) {
-          if (r.type !== "web_search_result" || !r.url || agent.sources.some((s) => s.url === r.url)) continue;
-          agent.sources.push({ title: r.title ?? r.url, url: r.url, price: null, note: null, image_url: null });
-        }
-        agent.status = "reading";
-        agent.activity = `Reading ${agent.sources.length} pages`;
-      } else if (b.type === "text") {
-        agent.activity = "Writing summary";
-      }
+  private async claudeAgent(session: Session, spec: AgentSpec, agent: ResearchAgent) {
+    await runClaudeAgent(this.deps.client!, this.deps.model, spec, agent, {
+      item: itemDescription(session),
+      category: session.category,
+      asking_price: session.asking_price,
+      target_price: session.target_price,
+      live: true,
     });
+  }
 
-    const msg = await stream.finalMessage();
-    if (msg.stop_reason === "refusal") throw new Error("model declined the research request");
-    const text = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
-    const out = ResearchOutput.parse(extractJson(text));
-
-    // The model's own picks go first (they carry price/note); keep other search hits after them.
-    const picked: ResearchSource[] = out.sources
-      .filter((s) => /^https?:\/\//.test(s.url))
-      .map((s) => ({ title: s.title, url: s.url, price: s.price ?? null, note: s.note ?? null, image_url: null }));
-    const rest = agent.sources.filter((s) => !picked.some((p) => p.url === s.url));
-    agent.sources = [...picked, ...rest].slice(0, 8);
-    agent.summary = out.summary;
-    agent.price_low = out.price_low ?? null;
-    agent.price_high = out.price_high ?? null;
-
-    agent.activity = "Pulling images";
-    await Promise.all(
-      agent.sources.slice(0, 4).map(async (s) => { s.image_url = await fetchPageImage(s.url); }),
-    );
-    agent.status = "done";
-    agent.activity = `${agent.queries.length} searches · ${agent.sources.length} sources`;
-    agent.finished_at = now();
+  /**
+   * POST /research/preview: one "comparable listings" agent, no session, blocking until it finishes.
+   * Real mode: Claude + web search (same code as the session agents), then og:images. Mock mode: the
+   * category's content/comparables listings after ~1.5 s. A failed agent returns nulls (and any search hits).
+   */
+  async preview(input: PreviewInput): Promise<ResearchPreview> {
+    const category = normalizeCategory(input.category ?? "") || "marketplace";
+    if (this.deps.mockMode || !this.deps.client) {
+      await new Promise((r) => setTimeout(r, MOCK_PREVIEW_DELAY_MS));
+      return mockPreview(category, input.asking_price ?? null);
+    }
+    const spec = AGENTS.find((a) => a.id === "comps")!;
+    const agent = newAgent(spec);
+    try {
+      await runClaudeAgent(this.deps.client, this.deps.model, spec, agent, {
+        item: input.item, category, asking_price: input.asking_price ?? null, target_price: null, live: false,
+      });
+    } catch (err) {
+      this.deps.log.warn({ err: String(err) }, "research preview failed");
+      return { summary: null, price_low: null, price_high: null, sources: agent.sources.slice(0, 5) };
+    }
+    return { summary: agent.summary, price_low: agent.price_low, price_high: agent.price_high, sources: agent.sources };
   }
 
   /** Mock mode: replay content/comparables with realistic pacing so the UI animates without keys. */

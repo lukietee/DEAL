@@ -25,8 +25,9 @@ export class StripePayments implements Payments {
   readonly kind = "stripe" as const;
   private stripe: Stripe;
   constructor(secretKey: string) {
-    if (!secretKey.startsWith("sk_test_")) {
-      throw new Error("STRIPE_SECRET_KEY must be a test-mode key (sk_test_...)");
+    // Test mode only: a standard (sk_test_) or restricted (rk_test_, needs PaymentIntents: Write) key.
+    if (!/^(sk|rk)_test_/.test(secretKey)) {
+      throw new Error("STRIPE_SECRET_KEY must be a test-mode key (sk_test_... or rk_test_...)");
     }
     this.stripe = new Stripe(secretKey);
   }

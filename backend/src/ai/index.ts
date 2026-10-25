@@ -1,10 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { z } from "zod";
 import type { Config } from "../config.js";
-import { AgreementDraftSchema, CueExtractionSchema, getComparables, getTactics } from "../content.js";
+import { AgreementDraftSchema, CueExtractionSchema, getTactics } from "../content.js";
 import {
-  ConditionModelSchema, ListingModelSchema, decodeImage, isFacebookUrl, mockConditionCheck, mockParseListing,
-  type ConditionInput, type Discrepancy, type Listing, type ListingInput,
+  ConditionCheckError, ConditionModelSchema, LISTING_UNREADABLE, ListingModelSchema, ListingUnreadableError, URL_UNREADABLE,
+  decodeImage, isFacebookUrl, mockConditionCheck, mockParseListing, type ConditionInput, type Discrepancy, type Listing, type ListingInput,
 } from "../listing.js";
 import { mockAgreement, type AgreementDraft } from "../mock/agreement.js";
 import { mockCue } from "../mock/extract.js";
@@ -12,8 +12,10 @@ import { templateExplanation, formatClock } from "../mismatch.js";
 import { formatCents } from "../money.js";
 import type { CueExtraction, DealEvent, LineItem, MismatchDetails, Session, Speaker } from "../types.js";
 import {
-  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, LISTING_SYSTEM, MISMATCH_SYSTEM, agreementUserPrompt, cueUserPrompt,
+  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, LISTING_SYSTEM, LISTING_URL_SYSTEM, MISMATCH_SYSTEM, agreementUserPrompt,
+  cueUserPrompt, listingUrlPrompt,
 } from "./prompts.js";
+import type { ResearchState } from "../research.js";
 
 export interface CueInput {
   session: Session;
@@ -21,6 +23,35 @@ export interface CueInput {
   speaker: Speaker;
   text: string;
   scriptId?: string;
+  /** The session's live web research (finished agents only); null until at least one agent is done. */
+  research?: CueResearch | null;
+}
+
+/** Compact view of the live research agents, passed to the cue model instead of static comparables. */
+export interface CueResearch {
+  status: "running" | "done";
+  agents: {
+    title: string;
+    summary: string | null;
+    price_low: number | null; // cents
+    price_high: number | null; // cents
+    top_sources: { title: string; price: number | null }[];
+  }[];
+}
+
+export function cueResearchFrom(state: ResearchState | null): CueResearch | null {
+  const done = state?.agents.filter((a) => a.status === "done") ?? [];
+  if (!state || !done.length) return null;
+  return {
+    status: state.status,
+    agents: done.map((a) => ({
+      title: a.title,
+      summary: a.summary,
+      price_low: a.price_low,
+      price_high: a.price_high,
+      top_sources: a.sources.slice(0, 4).map((s) => ({ title: s.title, price: s.price })),
+    })),
+  };
 }
 
 export interface Ai {
@@ -88,8 +119,8 @@ export class ClaudeAi implements Ai {
   private client: Anthropic;
   private fallback: MockAi;
 
-  constructor(private cfg: Config, private log: Logger) {
-    this.client = new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 });
+  constructor(private cfg: Config, private log: Logger, client?: Anthropic) {
+    this.client = client ?? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 });
     this.fallback = new MockAi(cfg.displayTimeZone);
   }
 
@@ -128,7 +159,7 @@ export class ClaudeAi implements Ai {
 
   async cue(input: CueInput): Promise<CueExtraction> {
     try {
-      const user = cueUserPrompt(input.session, input.recent, { speaker: input.speaker, text: input.text }, getTactics(), getComparables(input.session.category));
+      const user = cueUserPrompt(input.session, input.recent, { speaker: input.speaker, text: input.text }, getTactics(), input.research ?? null);
       return await this.structured(this.cfg.cueModel, CUE_SYSTEM, user, CueExtractionSchema, "low");
     } catch (err) {
       this.log.warn({ err: String(err) }, "cue model failed; using mock extraction");
@@ -155,22 +186,85 @@ export class ClaudeAi implements Ai {
     }
   }
 
+  /**
+   * Real mode never returns the canned listing. Text / screenshot: Claude reads them. A bare URL: Claude reads the
+   * page with the server-side web_fetch tool (we never scrape ourselves). Failures throw ListingUnreadableError (422).
+   */
   async parseListing(input: ListingInput): Promise<Listing> {
-    // A bare URL can't be read without scraping Facebook (which we don't do): use the canned listing.
+    let listing: Listing;
     if (!input.text && !input.image_base64) {
-      this.log.warn({}, "listing parse with only a url: no scraping, returning the canned listing");
-      return this.fallback.parseListing(input);
+      if (!input.url) throw new ListingUnreadableError(LISTING_UNREADABLE, "empty input");
+      listing = await this.parseListingUrl(input.url);
+    } else {
+      try {
+        const user = JSON.stringify({ url: input.url ?? null, pasted_text: input.text ?? null, screenshot_attached: !!input.image_base64 }, null, 1);
+        listing = await this.structured(this.cfg.agreementModel, LISTING_SYSTEM, withImage(user, input.image_base64), ListingModelSchema, "low");
+      } catch (err) {
+        this.log.warn({ err: String(err) }, "listing model failed");
+        throw new ListingUnreadableError(LISTING_UNREADABLE, String(err).slice(0, 300));
+      }
+      if (!listing.title.trim() || listing.asking_price <= 0) throw new ListingUnreadableError(LISTING_UNREADABLE, "no title or price found");
     }
+    if (input.url) listing.url = input.url;
+    if (isFacebookUrl(input.url)) listing.source = "facebook_marketplace";
+    return listing;
+  }
+
+  /** Bare-URL import: AGREEMENT_MODEL + web_fetch (max 2 fetches), pause_turn continued, then ListingModelSchema. */
+  private async parseListingUrl(url: string): Promise<Listing> {
+    const fail = (reason: string): never => {
+      this.log.warn({ reason, url }, "listing url could not be read");
+      throw new ListingUnreadableError(URL_UNREADABLE, reason);
+    };
+    const tools: Anthropic.ToolUnion[] = [{ type: "web_fetch_20260209", name: "web_fetch", max_uses: 2, max_content_tokens: 40000 }];
+    const messages: Anthropic.MessageParam[] = [{ role: "user", content: listingUrlPrompt(url) }];
+    const blocks: Anthropic.ContentBlock[] = [];
+    const send = () =>
+      this.client.messages.create({
+        model: this.cfg.agreementModel,
+        max_tokens: 4000,
+        system: LISTING_URL_SYSTEM,
+        output_config: { effort: "low" },
+        tools,
+        messages,
+      });
+
+    let msg: Anthropic.Message;
     try {
-      const user = JSON.stringify({ url: input.url ?? null, pasted_text: input.text ?? null, screenshot_attached: !!input.image_base64 }, null, 1);
-      const listing = await this.structured(this.cfg.agreementModel, LISTING_SYSTEM, withImage(user, input.image_base64), ListingModelSchema, "low");
-      if (input.url) listing.url = input.url;
-      if (isFacebookUrl(input.url)) listing.source = "facebook_marketplace";
-      return listing;
+      msg = await send();
+      blocks.push(...msg.content);
+      // Server tools can pause a long turn; re-send with the assistant content so far to let it continue.
+      for (let i = 0; msg.stop_reason === "pause_turn" && i < 3; i++) {
+        messages.push({ role: "assistant", content: msg.content });
+        msg = await send();
+        blocks.push(...msg.content);
+      }
     } catch (err) {
-      this.log.warn({ err: String(err) }, "listing model failed; using canned listing");
-      return this.fallback.parseListing(input);
+      return fail(`api error: ${String(err).slice(0, 200)}`);
     }
+    if (msg.stop_reason === "refusal") return fail("model refused");
+    if (msg.stop_reason === "pause_turn") return fail("still paused after 3 continuations");
+
+    // Server-tool errors arrive as result blocks with an error object, not as exceptions.
+    const fetches = blocks.filter((b): b is Anthropic.WebFetchToolResultBlock => b.type === "web_fetch_tool_result");
+    const ok = fetches.filter((f) => f.content.type === "web_fetch_result");
+    if (!ok.length) {
+      const codes = fetches.map((f) => (f.content.type === "web_fetch_tool_result_error" ? f.content.error_code : "?"));
+      return fail(fetches.length ? `web_fetch failed: ${codes.join(", ")}` : "model did not fetch the page");
+    }
+
+    let raw: unknown;
+    try {
+      raw = extractJson(textOf(msg));
+    } catch (err) {
+      return fail(`no JSON: ${String(err).slice(0, 200)}`);
+    }
+    const r = raw as { error?: unknown } | null;
+    if (r && typeof r === "object" && r.error) return fail(`model: ${String(r.error).slice(0, 200)}`);
+    const parsed = ListingModelSchema.safeParse(raw);
+    if (!parsed.success) return fail(`invalid listing: ${parsed.error.message.slice(0, 200)}`);
+    if (!parsed.data.title.trim() || parsed.data.asking_price <= 0) return fail("no title or price on the page");
+    return parsed.data;
   }
 
   async conditionCheck(listing: Listing, input: ConditionInput): Promise<Discrepancy[]> {
@@ -187,8 +281,8 @@ export class ClaudeAi implements Ai {
         .map((d) => ({ ...d, claim: claims.get(d.claim.trim().toLowerCase()) ?? d.claim }))
         .filter((d) => claims.has(d.claim.trim().toLowerCase()));
     } catch (err) {
-      this.log.warn({ err: String(err) }, "condition model failed; using mock condition check");
-      return this.fallback.conditionCheck(listing, input);
+      this.log.warn({ err: String(err) }, "condition model failed");
+      throw new ConditionCheckError("Condition check failed. Try again, or describe what you see in a few words.");
     }
   }
 

@@ -16,6 +16,11 @@ struct NewNegotiationView: View {
     @State private var comparables: [Comparable] = []
     @State private var comparablesError: String?
     @State private var loadingComparables = false
+    // "Check market price" (POST /research/preview), used when demo shortcuts are off.
+    @State private var marketPreview: ResearchPreview?
+    @State private var marketError: String?
+    @State private var checkingMarket = false
+    @State private var marketGeneration = 0
     @State private var isStarting = false
     @State private var error: String?
 
@@ -26,8 +31,14 @@ struct NewNegotiationView: View {
     @State private var listingNote: String?
     @State private var isImporting = false
     @State private var importError: String?
+    @State private var showTextEntry = false
+    @State private var listingText = ""
     /// Bumped by every fill/import so a slow import can't overwrite a newer choice (e.g. Car demo).
     @State private var fillGeneration = 0
+
+    /// Demo shortcuts (Settings): auto-loaded demo listing, Car demo / Use demo values, static comparables.
+    private var demo: Bool { model.settings.demoShortcuts }
+    private var trimmedItem: String { item.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private var askingCents: Int? { Money.parseDollars(asking) }
     private var targetCents: Int? { Money.parseDollars(target) }
@@ -57,7 +68,7 @@ struct NewNegotiationView: View {
                 categorySection
                 numbersSection
                 styleSection
-                comparablesSection
+                if demo { comparablesSection } else { marketPriceSection }
             }
         }
         .scrollDismissesKeyboard(.interactively)
@@ -77,13 +88,15 @@ struct NewNegotiationView: View {
         .toolbar {
             ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) }
             ToolbarItemGroup(placement: .dealTrailing) {
-                Button("Car demo") { fillCarDemo() }
-                Button("Use demo values") { Task { await fillMarketplaceDemo() } }
+                if demo {
+                    Button("Car demo") { fillCarDemo() }
+                    Button("Use demo values") { Task { await fillMarketplaceDemo() } }
+                }
             }
         }
         .toolbarBackground(Palette.sand, for: .navigationBar)
-        .task(id: category) { await loadComparables() }
-        .task { if item.isEmpty && listing == nil { await fillMarketplaceDemo() } }
+        .task(id: category) { if demo { await loadComparables() } }
+        .task { if demo && item.isEmpty && listing == nil { await fillMarketplaceDemo() } }
         .onChange(of: photoItem) { _, newItem in
             guard let newItem else { return }
             Task { await importScreenshot(newItem) }
@@ -210,6 +223,111 @@ struct NewNegotiationView: View {
         }
     }
 
+    /// B2 "Market price": one web search for what this item really sells for, on demand.
+    private var marketPriceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Market price") {
+                if marketPreview != nil && !checkingMarket {
+                    Button("Check again") { Task { await checkMarketPrice() } }
+                        .font(DealFont.jakarta(13, .bold))
+                        .buttonStyle(.plain)
+                        .disabled(trimmedItem.isEmpty)
+                }
+            }
+            SurfaceCard(padding: 16) {
+                if checkingMarket {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Palette.ink)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Searching the web…").font(DealFont.jakarta(15, .bold))
+                            Text("Comparing prices for \(trimmedItem). This takes about 20 seconds.")
+                                .font(DealFont.caption).foregroundStyle(Palette.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .accessibilityElement(children: .combine)
+                } else if let marketPreview {
+                    marketResult(marketPreview)
+                } else {
+                    Text(trimmedItem.isEmpty
+                         ? "Enter what you're buying, then check what it actually sells for."
+                         : "See what \(trimmedItem) actually sells for before you start.")
+                        .font(DealFont.caption).foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        Task { await checkMarketPrice() }
+                    } label: {
+                        Label("Check market price", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ink, height: 48))
+                    .disabled(trimmedItem.isEmpty)
+                    .opacity(trimmedItem.isEmpty ? 0.4 : 1)
+                    .padding(.top, 4)
+                }
+                if let marketError, !checkingMarket {
+                    Text(marketError).font(DealFont.caption).foregroundStyle(Palette.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func marketResult(_ preview: ResearchPreview) -> some View {
+        if let range = Self.range(preview) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("FAIR RANGE")
+                    .font(DealFont.jakarta(11, .extrabold)).kerning(1.3)
+                    .foregroundStyle(Palette.muted)
+                Text(range.low == range.high ? Money.format(range.low) : "\(Money.format(range.low)) – \(Money.format(range.high))")
+                    .font(DealFont.jakarta(30, .extrabold)).kerning(-1)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                if let a = askingCents, a > 0 {
+                    Text(a > range.high ? "Asking \(Money.format(a)) is above the range."
+                         : a < range.low ? "Asking \(Money.format(a)) is below the range."
+                         : "Asking \(Money.format(a)) is within the range.")
+                        .font(DealFont.jakarta(13, .semibold))
+                        .foregroundStyle(a > range.high ? Palette.red : Palette.greenText)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+        if let summary = preview.summary, !summary.isEmpty {
+            Text(summary)
+                .font(DealFont.jakarta(14))
+                .foregroundStyle(Palette.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if Self.range(preview) == nil && (preview.summary ?? "").isEmpty && preview.sources.isEmpty {
+            Text("No prices found for this item. Try a more specific name (brand, model, size).")
+                .font(DealFont.caption).foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        let shown = Array(preview.sources.prefix(4))
+        if !shown.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { index, source in
+                    MarketSourceRow(source: source)
+                    if index < shown.count - 1 { Rectangle().fill(Palette.divider).frame(height: 1) }
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.surfaceWarm))
+            .padding(.top, 4)
+        }
+    }
+
+    /// The fair range from `price_low` / `price_high`; a single bound counts as both.
+    private static func range(_ p: ResearchPreview) -> (low: Int, high: Int)? {
+        switch (p.priceLow, p.priceHigh) {
+        case let (l?, h?): (min(l, h), max(l, h))
+        case let (l?, nil): (l, l)
+        case let (nil, h?): (h, h)
+        default: nil
+        }
+    }
+
     private var startBar: some View {
         VStack(spacing: 8) {
             if let error {
@@ -288,6 +406,47 @@ struct NewNegotiationView: View {
                 }
                 .padding(.top, 2)
 
+                if showTextEntry {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Paste the listing text: title, price, description…", text: $listingText, axis: .vertical)
+                            .font(DealFont.jakarta(15))
+                            .lineLimit(3...8)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.surfaceWarm))
+                            .accessibilityIdentifier("listingText")
+                        HStack(spacing: 8) {
+                            PasteButton(payloadType: String.self) { strings in
+                                guard let first = strings.first else { return }
+                                Task { @MainActor in listingText = first }
+                            }
+                            .buttonBorderShape(.capsule)
+                            .tint(Palette.sand)
+                            Spacer(minLength: 0)
+                            let empty = listingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            Button {
+                                Task { await importText() }
+                            } label: {
+                                Text("Read listing")
+                            }
+                            .buttonStyle(PillButtonStyle(kind: .ink, height: 44, fullWidth: false))
+                            .disabled(empty || isImporting)
+                            .opacity(empty ? 0.4 : 1)
+                        }
+                    }
+                    .padding(.top, 2)
+                } else {
+                    Button {
+                        withAnimation { showTextEntry = true }
+                    } label: {
+                        Label("Paste listing text instead", systemImage: "text.alignleft")
+                            .font(DealFont.jakarta(14, .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                    .padding(.leading, 4)
+                }
+
                 if isImporting {
                     Label("Reading listing…", systemImage: "text.viewfinder")
                         .font(DealFont.caption).foregroundStyle(Palette.muted)
@@ -300,7 +459,7 @@ struct NewNegotiationView: View {
                         .padding(.top, 4)
                 }
             }
-            Text("Paste a Facebook Marketplace link or pick a screenshot. DEAL reads the price and what the seller claims about condition, then checks those claims at the meetup.")
+            Text("Paste a Facebook Marketplace link, the listing text, or a screenshot. DEAL reads the price and what the seller claims about condition, then checks those claims at the meetup.")
                 .font(DealFont.jakarta(12)).foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 6)
@@ -312,8 +471,19 @@ struct NewNegotiationView: View {
         let raw = listingLink.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
         let looksLikeURL = raw.lowercased().hasPrefix("http") || raw.contains("facebook.com") || raw.contains("fb.me")
-        await runImport(note: nil) {
+        let ok = await runImport(note: nil) {
             try await model.api.parseListing(url: looksLikeURL ? raw : nil, text: looksLikeURL ? nil : raw)
+        }
+        // An unreadable link (e.g. a login wall): offer the text box the backend's message points to.
+        if !ok && looksLikeURL && !demo { withAnimation { showTextEntry = true } }
+    }
+
+    /// "Paste listing text": the listing's words go to the parser as `text`.
+    private func importText() async {
+        let raw = listingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+        await runImport(note: "Read from listing text") {
+            try await model.api.parseListing(text: raw)
         }
     }
 
@@ -347,7 +517,8 @@ struct NewNegotiationView: View {
                 apply(fallback, note: "Offline demo listing (backend couldn't parse: \(error.localizedDescription))")
                 return true
             }
-            importError = "Couldn't import the listing. \(error.localizedDescription)"
+            // Real mode: the backend's own message ("Couldn't read that link. Paste the listing text…").
+            importError = demo ? "Couldn't import the listing. \(error.localizedDescription)" : error.localizedDescription
             return false
         }
     }
@@ -427,6 +598,25 @@ struct NewNegotiationView: View {
         style = .firm
     }
 
+    private func checkMarketPrice() async {
+        let query = trimmedItem
+        guard !query.isEmpty else { return }
+        marketGeneration += 1
+        let generation = marketGeneration
+        checkingMarket = true
+        marketError = nil
+        defer { if generation == marketGeneration { checkingMarket = false } }
+        do {
+            let preview = try await model.api.researchPreview(item: query, category: category, askingPrice: askingCents)
+            guard generation == marketGeneration else { return }
+            marketPreview = preview
+        } catch {
+            guard generation == marketGeneration else { return }
+            marketPreview = nil
+            marketError = "Couldn't check the market price. \(error.localizedDescription)"
+        }
+    }
+
     private func loadComparables() async {
         loadingComparables = true
         defer { loadingComparables = false }
@@ -463,6 +653,49 @@ struct NewNegotiationView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+/// One "Market price" source: thumbnail, title, site / note, price. Opens the page on tap.
+private struct MarketSourceRow: View {
+    var source: ResearchSource
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            if let url = URL(string: source.url), url.scheme?.hasPrefix("http") == true { openURL(url) }
+        } label: {
+            HStack(spacing: 12) {
+                AsyncImage(url: source.imageURL) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        ZStack {
+                            Palette.sand
+                            Image(systemName: "tag.fill").font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Palette.mutedWarm)
+                        }
+                    }
+                }
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(source.title).font(DealFont.jakarta(14, .bold)).lineLimit(2)
+                    let detail = [source.host, source.note ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+                    if !detail.isEmpty {
+                        Text(detail).font(DealFont.jakarta(12)).foregroundStyle(Palette.muted).lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if let price = source.price {
+                    Text(Money.format(price)).font(DealFont.jakarta(15, .extrabold))
+                }
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .multilineTextAlignment(.leading)
     }
 }
 

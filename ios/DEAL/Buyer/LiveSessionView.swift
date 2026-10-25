@@ -9,7 +9,10 @@ struct LiveSessionView: View {
     var store: SessionStore
     var onBackToAgreement: (() -> Void)? = nil
 
-    @State private var scriptedMode = true
+    /// The user's Scripted mode choice; nil = default (on only with demo shortcuts).
+    @State private var scriptedChoice: Bool?
+    /// Scripted playback is a demo shortcut: without it the live mic is the only input.
+    private var scriptedMode: Bool { model.settings.demoShortcuts && (scriptedChoice ?? true) }
     @State private var showJoinCode = false
     @State private var showTeleprompter = false
     @State private var fixingTerm: Term?
@@ -277,7 +280,7 @@ struct LiveSessionView: View {
     private func transcriptSection(_ state: SessionState) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if state.events.isEmpty {
-                Text(scriptedMode ? "Tap Play script to start the sample conversation." : "Listening will appear here.")
+                Text(scriptedMode ? "Tap Play script to start the sample conversation." : "Tap the mic to start listening, or type a line.")
                     .font(DealFont.jakarta(14)).foregroundStyle(Palette.muted)
             }
             ForEach(state.sortedEvents) { event in
@@ -305,17 +308,19 @@ struct LiveSessionView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 8)
-                Toggle(isOn: $scriptedMode) {
-                    Text("Scripted mode")
-                        .font(DealFont.jakarta(13, .semibold))
-                        .foregroundStyle(Palette.muted)
+                if model.settings.demoShortcuts {
+                    Toggle(isOn: Binding(get: { scriptedMode }, set: { scriptedChoice = $0 })) {
+                        Text("Scripted mode")
+                            .font(DealFont.jakarta(13, .semibold))
+                            .foregroundStyle(Palette.muted)
+                    }
+                    .toggleStyle(.switch)
+                    .tint(Palette.sand)
+                    .fixedSize()
                 }
-                .toggleStyle(.switch)
-                .tint(Palette.sand)
-                .fixedSize()
-                .onChange(of: scriptedMode) { _, scripted in
-                    if scripted { store.stopMic() }
-                }
+            }
+            .onChange(of: scriptedMode) { _, scripted in
+                if scripted { store.stopMic() }
             }
 
             if scriptedMode {

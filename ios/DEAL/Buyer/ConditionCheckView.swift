@@ -9,6 +9,7 @@ import UIKit
 /// discrepancies ("Listing: new tires · Seen: worn · ask $40 off"). The backend also inserts a
 /// cue event, so the matching cue reaches the glasses through the normal sync path.
 struct ConditionCheckSheet: View {
+    @Environment(AppModel.self) private var model
     var store: SessionStore
     @Environment(\.dismiss) private var dismiss
 
@@ -78,7 +79,7 @@ struct ConditionCheckSheet: View {
                             .padding(.vertical, 14)
                             .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Palette.surfaceWarm))
                             .accessibilityIdentifier("conditionObservation")
-                        if !CameraPicker.isAvailable {
+                        if !CameraPicker.isAvailable && model.settings.demoShortcuts {
                             // Simulator / no camera: a canned observation that matches the demo listing.
                             Button("Use sample observation") { observation = MarketplaceDemo.sampleObservation }
                                 .buttonStyle(PillButtonStyle(kind: .surface, height: 36, fullWidth: false))

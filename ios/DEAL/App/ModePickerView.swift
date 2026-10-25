@@ -51,7 +51,7 @@ struct ModePickerView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ScriptWelcome()
                 HStack(spacing: 14) {
-                    Text("Lucas")
+                    Text(model.settings.greetingName)
                         .font(DealFont.jakarta(76, .extrabold))
                         .kerning(-3.4)
                         .lineLimit(1)
@@ -59,7 +59,7 @@ struct ModePickerView: View {
                     AvatarImage()
                         .frame(width: 56, height: 56)
                         .clipShape(Circle())
-                        .accessibilityLabel("Lucas's avatar")
+                        .accessibilityLabel("\(model.settings.greetingName)'s avatar")
                 }
                 .frame(height: 72)
                 .padding(.top, -12)

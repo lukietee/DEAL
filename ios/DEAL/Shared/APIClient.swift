@@ -10,7 +10,8 @@ enum APIError: LocalizedError, Sendable {
         switch self {
         case .invalidURL(let s): "Invalid backend URL: \(s)"
         case .transport(let s): "Can't reach the backend. \(s)"
-        case .server(let status, let message): "Backend error \(status): \(message)"
+        // 422 carries a message meant for the user ("Couldn't read that link. Paste the listing text…").
+        case .server(let status, let message): status == 422 ? message : "Backend error \(status): \(message)"
         case .decoding(let s): "Unexpected response from backend. \(s)"
         }
     }
@@ -23,6 +24,8 @@ struct APIClient: Sendable {
     var session: URLSession = .shared
     /// Screenshot / photo uploads (listing parse, condition check) can take a while with real AI.
     static let uploadTimeout: TimeInterval = 45
+    /// `POST /research/preview` blocks while it searches the web (~15–25 s).
+    static let researchTimeout: TimeInterval = 60
 
     static let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -129,6 +132,12 @@ struct APIClient: Sendable {
                        body: ConditionCheckBody(observation: observation, imageBase64: imageBase64))
     }
 
+    /// B2 "Check market price": a one-shot web search for the fair price before a session exists.
+    func researchPreview(item: String, category: DealCategory, askingPrice: Int?) async throws -> ResearchPreview {
+        try await send("POST", "/research/preview",
+                       body: ResearchPreviewBody(item: item, category: category.rawValue, askingPrice: askingPrice))
+    }
+
     func comparables(category: DealCategory) async throws -> [Comparable] {
         let (data, _) = try await raw("GET", "/comparables/\(category.rawValue)", body: Optional<Empty>.none, expectSuccess: true)
         return try Self.decodeComparables(data)
@@ -189,7 +198,8 @@ struct APIClient: Sendable {
             throw APIError.invalidURL(baseURL.absoluteString + path)
         }
         let isUpload = path == "/listings/parse" || path.hasSuffix("/condition-check")
-        var request = URLRequest(url: url, timeoutInterval: isUpload ? Self.uploadTimeout : Config.requestTimeout)
+        let timeout = path == "/research/preview" ? Self.researchTimeout : isUpload ? Self.uploadTimeout : Config.requestTimeout
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // Skips ngrok's browser interstitial on free tunnels.

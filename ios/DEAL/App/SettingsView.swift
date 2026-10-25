@@ -17,6 +17,30 @@ struct SettingsView: View {
             VStack(spacing: 24) {
                 header
 
+                OpsSection(title: "Profile", footer: "Shown in the greeting on the start screen.") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Display name").font(DealFont.jakarta(13)).foregroundStyle(Ops.secondary)
+                        TextField(AppSettings.defaultDisplayName, text: $settings.displayName)
+                            .autocorrectionDisabled()
+                            .font(DealFont.jakarta(16))
+                            .padding(.horizontal, 12)
+                            .frame(height: 44)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Ops.inputFill))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Ops.border, lineWidth: 1))
+                            .accessibilityLabel("Display name")
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 14)
+                }
+
+                OpsSection(title: "Demo",
+                           footer: "Off: DEAL starts empty and works for any item (paste a link, the listing text or a screenshot; live mic; real market research). On: the stage shortcuts come back: the demo bike listing loads on its own, Car demo / Use demo values, Play script and Scripted mode, Use sample observation, the terminal's gas fee / protection package prefills and the illustrative comparables.") {
+                    Toggle("Demo shortcuts", isOn: $settings.demoShortcuts)
+                        .font(DealFont.jakarta(16))
+                        .tint(Ops.green)
+                        .opsRow()
+                        .accessibilityIdentifier("demoShortcutsToggle")
+                }
+
                 OpsSection(title: "Backend",
                            footer: "Simulator: http://localhost:3000. iPhone: your ngrok https URL or http://<Mac LAN IP>:3000. Using \(model.settings.backendURL.absoluteString).") {
                     VStack(alignment: .leading, spacing: 12) {
