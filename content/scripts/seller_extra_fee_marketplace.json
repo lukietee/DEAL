@@ -1,0 +1,40 @@
+{
+  "script_id": "marketplace_bike",
+  "illustrative": true,
+  "agreement_total": 52000,
+  "blocked_request": {
+    "description": "After both phones lock $520, the seller adds \"$20 for gas, I drove here\" at the terminal. Must be blocked: total 54000 != 52000 and 'gas fee' is not an agreement item or fee.",
+    "line_items": [
+      {
+        "label": "56cm Aluminum Road Bike, Shimano 105",
+        "amount": 52000
+      },
+      {
+        "label": "pedals",
+        "amount": 0
+      },
+      {
+        "label": "gas fee",
+        "amount": 2000
+      }
+    ],
+    "expected_status": "blocked",
+    "expected_extra_amount": 2000,
+    "contradicting_event_id": "evt_18",
+    "expected_explanation": "The $20 gas fee was never agreed to; the seller confirmed $520 total with no extra charges."
+  },
+  "corrected_request": {
+    "description": "Seller resubmits exactly what was agreed. Must be approved.",
+    "line_items": [
+      {
+        "label": "56cm Aluminum Road Bike, Shimano 105",
+        "amount": 52000
+      },
+      {
+        "label": "pedals",
+        "amount": 0
+      }
+    ],
+    "expected_status": "approved"
+  }
+}

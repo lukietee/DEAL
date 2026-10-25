@@ -85,6 +85,38 @@
       "cue_template": "Normal pushback. Hold firm.",
       "cue_detail_template": null,
       "status": "yellow"
+    },
+    {
+      "id": "fake_competing_buyer",
+      "name": "Fake competing buyer",
+      "detection_hints": ["another guy offered", "someone offered me", "someone else offered", "he's coming at", "she's coming at", "coming to look at it", "i have another offer", "got another offer", "other people are interested"],
+      "cue_template": "Unverified buyer. Hold your offer.",
+      "cue_detail_template": "Still listed at ${asking}",
+      "status": "red"
+    },
+    {
+      "id": "cash_zelle_pressure",
+      "name": "Cash / Zelle-only pressure",
+      "detection_hints": ["cash only", "zelle", "venmo", "cash app", "pay me first", "send it first", "send a deposit", "before you ride", "before you see it"],
+      "cue_template": "Pay verified, not Zelle",
+      "cue_detail_template": "Zelle and cash can't be reversed",
+      "status": "red"
+    },
+    {
+      "id": "price_raised_after_agreement",
+      "name": "Price raised after agreeing (in chat or in person)",
+      "detection_hints": ["for gas", "gas money", "i drove here", "drove all the way", "changed my mind", "price went up", "a little extra", "on top of that", "plus twenty", "add twenty"],
+      "cue_template": "Agreed price stands. Decline.",
+      "cue_detail_template": "Agreed ${agreed}",
+      "status": "red"
+    },
+    {
+      "id": "undisclosed_condition",
+      "name": "Undisclosed condition issue (doesn't match the listing)",
+      "detection_hints": ["just cosmetic", "barely noticeable", "plenty of miles left", "needs a little work", "just needs", "a little wear", "normal wear", "didn't mention"],
+      "cue_template": "Condition issue. Ask for discount.",
+      "cue_detail_template": "Listing says \"{claim}\"",
+      "status": "yellow"
     }
   ]
 }

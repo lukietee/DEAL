@@ -54,6 +54,7 @@ const FEE_WORDS: Array<[RegExp, string, string]> = [
   [/extended warranty|warranty/i, "addon", "warranty"],
   [/service plan/i, "addon", "service plan"],
   [/(tax|taxes)\b/i, "fee", "tax"],
+  [/\b(for gas|gas money|gas fee)\b/i, "fee", "gas fee"],
 ];
 
 function fill(template: string, vars: Record<string, string>): string {
@@ -136,9 +137,13 @@ export function fallbackExtraction(
           cueDetail = `${formatCentsShort(monthly.cents)}/mo × ${months} = ${formatCentsShort(monthly.cents * months)}`;
         }
       } else if (t.cue_detail_template) {
+        // Fill what we know; drop the detail line if any {placeholder} is left unfilled.
         const fee = newTerms.find((x) => x.type !== "price" && x.amount);
-        if (fee) cueDetail = fill(t.cue_detail_template, { label: fee.label, amount: formatCentsShort(fee.amount!).slice(1) });
-        else cueDetail = null;
+        const vars: Record<string, string> = { asking: formatCentsShort(session.asking_price).slice(1) };
+        if (fee) Object.assign(vars, { label: fee.label, amount: formatCentsShort(fee.amount!).slice(1) });
+        if (session.current_offer != null) vars.agreed = formatCentsShort(session.current_offer).slice(1);
+        const filled = fill(t.cue_detail_template, vars);
+        cueDetail = /\{\w+\}/.test(filled) ? null : filled;
       }
       break;
     }

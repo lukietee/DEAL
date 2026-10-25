@@ -12,7 +12,7 @@ function session(over: Partial<Session> = {}): Session {
   return {
     id: "ses_test", category: "car", item: car.item, asking_price: car.asking_price, target_price: car.target_price,
     max_budget: car.max_budget, style: "firm", status: "live", join_code: "ABC123", current_offer: null,
-    current_offer_by: null, terms: [], created_at: "", updated_at: "", ...over,
+    current_offer_by: null, terms: [], listing: null, condition_checks: [], created_at: "", updated_at: "", ...over,
   };
 }
 
@@ -103,7 +103,7 @@ describe("mock agreement", () => {
     const events = pawn.lines.map((l: any, i: number) => ({
       id: `p${i}`, session_id: "x", seq: i + 1, speaker: l.speaker, text: l.text, timestamp: new Date(0).toISOString(),
       extracted_offer: l.expected.current_offer, offer_by: l.expected.offer_by, new_terms: l.expected.new_terms,
-      tactic: null, cue: null, cue_detail: null, status_color: l.expected.status, script_line_id: l.id,
+      tactic: null, cue: null, cue_detail: null, status_color: l.expected.status, script_line_id: l.id, kind: "speech" as const,
     }));
     let terms: Session["terms"] = [];
     for (const e of events) terms = mergeTerms(terms, e.new_terms, e.id);

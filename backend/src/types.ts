@@ -1,5 +1,7 @@
 // Shared data model. Mirrors Section 6 / 12.5 of DEAL_Visa_CalHacks_Concept.md.
 // ALL money values are integer cents (3460000 = $34,600.00).
+import type { ConditionCheck, Listing } from "./listing.js";
+export type { ConditionCheck, Discrepancy, Listing } from "./listing.js";
 
 export type Speaker = "buyer" | "seller";
 export type StatusColor = "green" | "yellow" | "red";
@@ -31,6 +33,8 @@ export interface Session {
   current_offer: number | null;
   current_offer_by: Speaker | null;
   terms: Term[];
+  listing: Listing | null; // parsed marketplace listing (POST /listings/parse), if the buyer attached one
+  condition_checks: ConditionCheck[]; // POST /sessions/:id/condition-check results, oldest first
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +56,8 @@ export interface CueExtraction {
   status: StatusColor;
 }
 
+export type EventKind = "speech" | "condition_check";
+
 export interface DealEvent {
   id: string;
   session_id: string;
@@ -67,6 +73,7 @@ export interface DealEvent {
   cue_detail: string | null;
   status_color: StatusColor;
   script_line_id: string | null; // e.g. "evt_01" when inserted by /script/play
+  kind: EventKind; // "speech" = a transcript line; "condition_check" = a cue from POST /condition-check
 }
 
 export interface Fee {

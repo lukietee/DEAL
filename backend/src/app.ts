@@ -7,6 +7,7 @@ import { Deal, HttpError } from "./deal.js";
 import { createPayments, type Payments } from "./payments/index.js";
 import { agreementRoutes } from "./routes/agreements.js";
 import { eventRoutes } from "./routes/events.js";
+import { listingRoutes } from "./routes/listings.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import type { Store } from "./store/index.js";
@@ -21,7 +22,7 @@ export interface AppDeps {
 }
 
 export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: FastifyInstance; deal: Deal }> {
-  const app = Fastify({ logger: deps.logger ?? true, bodyLimit: 1_000_000 });
+  const app = Fastify({ logger: deps.logger ?? true, bodyLimit: 12_000_000 /* base64 screenshots / photos */ });
   await app.register(cors, { origin: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] });
 
   const store =
@@ -56,6 +57,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
   eventRoutes(app, deal);
   agreementRoutes(app, deal);
   paymentRoutes(app, deal);
+  listingRoutes(app, deal);
 
   app.addHook("onClose", async () => deal.stopAll());
   return { app, deal };

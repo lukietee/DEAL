@@ -9,7 +9,8 @@ cd backend
 npm install
 cp .env.example .env        # optional; with no .env, MOCK_MODE defaults to true
 npm run dev                 # http://0.0.0.0:3000 (reachable from an iPhone on LAN / ngrok)
-npm run demo                # in a second terminal: the full 12.6 flow with curl + jq
+npm run demo:marketplace    # in a second terminal: the flagship Marketplace bike meetup with curl + jq
+npm run demo                # the car flow (12.6)
 ```
 
 Other scripts:
@@ -19,7 +20,8 @@ Other scripts:
 | `npm test` | vitest: fingerprint, mismatch rules (match / extra fee / changed amount / tampered), mock extraction, full HTTP flow |
 | `npm run build` | `tsc` typecheck (src + tests), then emit `dist/` |
 | `npm start` | run the built server (`node dist/server.js`) |
-| `bash scripts/demo.sh http://<host>:3000` | run the demo against another URL (`INTERVAL_MS=…` changes the script speed) |
+| `bash scripts/demo.sh http://<host>:3000` | run the car demo against another URL (`INTERVAL_MS=…` changes the script speed) |
+| `bash scripts/demo-marketplace.sh http://<host>:3100` | run the Marketplace demo: parse listing, session with listing, condition check, bike script, lock $520, **$20 gas fee blocked**, reject, pay $520, dispute pack |
 
 For the phone: `ngrok http 3000`, then put the https URL in the iOS `BACKEND_URL`.
 
@@ -42,7 +44,7 @@ Content comes from `../content` at runtime (override with `CONTENT_DIR`). No pla
 | Method & path | Body | Returns |
 |---|---|---|
 | `GET /health` *(added)* | | `{ok, mock_mode, ai, store, payments, models, scripts, time}` |
-| `POST /sessions` | `{category, item, asking_price, target_price, max_budget, style}` | `Session` (201). `category` is normalised (`"Pawn Shop"` → `pawn_shop`) |
+| `POST /sessions` | `{category, item, asking_price, target_price, max_budget, style, listing?}` | `Session` (201). `category` is normalised (`"Pawn Shop"` → `pawn_shop`). The optional `listing` (a `Listing`) is stored as `session.listing`. Every session also has `condition_checks: ConditionCheck[]` |
 | `POST /sessions/join` | `{join_code}` (case-insensitive) | `Session` |
 | `GET /sessions` | | `Session[]`, each with `final_price, paid_at, blocked_total, savings` |
 | `GET /sessions/:id` | | `{session, events, agreement, payment_requests, receipt, script}` |
@@ -56,10 +58,31 @@ Content comes from `../content` at runtime (override with `CONTENT_DIR`). No pla
 | `POST /payment-requests/:id/decision` | `{decision: "approve"\|"reject"}` | `PaymentRequest`. Only allowed on `blocked` requests |
 | `POST /payment-requests/:id/pay` | | `Receipt` (201). Only allowed on `approved` requests; re-checks first |
 | `GET /sessions/:id/dispute-pack` | | JSON evidence pack |
+| `POST /listings/parse` *(marketplace)* | `{url?, text?, image_base64?}` (at least one) | `Listing` (200). See below |
+| `POST /sessions/:id/condition-check` *(marketplace)* | `{observation?, image_base64?}` (at least one) | `{discrepancies: Discrepancy[], event: Event}` (201). 409 if the session has no `listing` |
 | `GET /comparables/:category` *(added)* | | `content/comparables/<category>.json` |
-| `GET /scripts` *(added)* | | `{scripts: ["car_accord", "pawn_guitar"]}` |
+| `GET /scripts` *(added)* | | `{scripts: ["car_accord", "marketplace_bike", "pawn_guitar"]}` |
+
+`Event` has a new field `kind`: `"speech"` for transcript lines, or `"condition_check"` for the event a condition check inserts. The request body limit is 12 MB, so base64 photos fit. Downscale on the phone first, because Claude takes at most 5 MB per image.
 
 Errors are `{error, details?}` with status 400 (validation), 404 or 409 (state conflict).
+
+### Marketplace: listings and condition checks (`src/listing.ts`)
+
+```ts
+Listing = { title: string, asking_price: number /* cents */, category: "marketplace", condition_claims: string[],
+            description: string, location?: string, seller_name?: string,
+            source: "facebook_marketplace" | "other", url?: string }
+Discrepancy = { claim: string /* one of condition_claims */, observed: string, suggested_discount: number /* cents */,
+                cue: string /* 3–6 words */ }
+ConditionCheck = { id, at, observation: string | null, had_image: boolean, discrepancies: Discrepancy[], event_id }
+```
+
+- **`POST /listings/parse`.** We never scrape Facebook. In mock mode the endpoint always returns `content/listings/marketplace_bike.json`, with your `url` copied in when you send one. In real mode, `AGREEMENT_MODEL` reads the pasted `text` and/or the screenshot (`image_base64`, vision; a `data:image/...;base64,` prefix is fine). The output is zod-validated, with one retry. A facebook.com URL forces `source: "facebook_marketplace"`. A request with **only** a `url` can't be read without scraping, so it gets the canned listing, and so does a Claude failure (the demo never stalls).
+- **`POST /sessions/:id/condition-check`.** This compares the observation and/or photo with `session.listing.condition_claims`. Mock mode uses keyword rules: tires → "new tires last month", $40, cue "Tires worn: ask $40 off". Scratches, rust, shifting and frame damage are covered too. A photo alone, or an unrecognised observation, gets the canned tires result. "Looks great / matches the listing" gets `[]`. In real mode, Claude (vision) does the comparison, the output is zod-validated, and only claims the listing actually made are kept.
+- **How it reaches the glasses.** The check inserts a normal `Event` with `kind: "condition_check"` and `speaker: "buyer"`. Its `text` is "Condition check: …", `tactic` is `undisclosed_condition`, `cue` is the first discrepancy's cue, and `cue_detail` is `Listing says "<claim>"` (or "N issues, ask $X off"). `status_color` is yellow, or red when the standing offer is above max, or green when nothing is wrong. The standing offer and terms stay unchanged. The phones already show the latest event's cue, so this cue reaches the glasses and teleprompter over the same path (Realtime on `events`) with no new subscription. The check is also appended to `session.condition_checks`.
+- **Dispute pack.** It now has `listing` (or `null`) and `condition_discrepancies: [{claim, observed, suggested_discount, cue, checked_at, event_id}]`. The condition-check events are added to `transcript_excerpts`.
+- **Supabase.** New columns: `sessions.listing jsonb`, `sessions.condition_checks jsonb` and `events.kind text`. `schema.sql` adds them idempotently.
 
 ### Mismatch rule (`src/mismatch.ts`)
 1. The recomputed fingerprint must equal `agreement.fingerprint`. Otherwise the reason is `fingerprint_mismatch`.

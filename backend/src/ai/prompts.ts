@@ -31,6 +31,7 @@ export function cueUserPrompt(session: Session, recent: DealEvent[], line: { spe
         style: session.style,
         current_offer: session.current_offer,
         current_offer_by: session.current_offer_by,
+        listing_condition_claims: session.listing?.condition_claims ?? null,
       },
       comparables,
       tactics: tactics.map((t) => ({ id: t.id, name: t.name, hints: t.detection_hints, cue: t.cue_template, status: t.status })),
@@ -70,3 +71,29 @@ export function agreementUserPrompt(session: Session, events: DealEvent[]): stri
 
 export const MISMATCH_SYSTEM = `A seller's payment request did not match the locked Deal Agreement. Write ONE plain-English sentence (max 35 words) for the buyer explaining the mismatch.
 Cite the contradicting transcript line in quotes and its time (as given). Mention the extra or changed amount in dollars. No preamble, no JSON, just the sentence.`;
+
+export const LISTING_SYSTEM = `You read a second-hand marketplace listing (pasted text and/or a screenshot, usually Facebook Marketplace) and return ONLY a JSON object (no prose, no code fences):
+{
+  "title": string,                        // the listing title
+  "asking_price": integer cents,          // $650 = 65000
+  "category": "marketplace",
+  "condition_claims": [string],           // short, verbatim-ish condition promises, e.g. "like new", "new tires last month", "no scratches"
+  "description": string,                  // the listing body text
+  "location": string or null,
+  "seller_name": string or null,
+  "source": "facebook_marketplace" | "other",
+  "url": string or null
+}
+Rules: ALL money is integer cents. Only include claims the listing actually makes about condition, wear, damage, age or maintenance. Never invent fields; use null when unknown.`;
+
+export const CONDITION_SYSTEM = `You help a BUYER at an in-person marketplace meetup check the item against its listing.
+You get the listing's condition_claims plus the buyer's observation and/or a photo. Return ONLY a JSON object (no prose, no code fences):
+{
+  "discrepancies": [{
+    "claim": string,               // EXACTLY one of the listing's condition_claims that the item contradicts
+    "observed": string,            // what is actually visible/observed, one short sentence
+    "suggested_discount": integer, // a fair discount in integer cents for this issue (e.g. worn tires on a bike ~ 4000)
+    "cue": string                  // 3-6 words for the buyer's glasses, e.g. "Tires worn: ask $40 off"
+  }]
+}
+Rules: Only report real contradictions of a listed claim; [] if the item matches. ALL money is integer cents. Be conservative with discounts (typical repair or replacement cost).`;

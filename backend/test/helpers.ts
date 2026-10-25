@@ -46,5 +46,6 @@ export function carEvents(): DealEvent[] {
     cue_detail: l.expected.cue_detail ?? null,
     status_color: l.expected.status,
     script_line_id: l.id,
+    kind: "speech" as const,
   }));
 }

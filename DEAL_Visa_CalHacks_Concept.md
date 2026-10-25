@@ -12,29 +12,35 @@
 
 ## 1. One-Liner
 
-**DEAL coaches you through in-person negotiations, locks in what you agreed to, and won't let you get charged a dollar more.**
+**DEAL is a copilot for Facebook Marketplace meetups. It coaches you on your glasses while you haggle with a stranger, catches anything that doesn't match the listing, locks the price you both agreed to, and turns the seller's phone into a terminal. Payment is verified on both phones before the item changes hands.**
 
-DEAL works for any face-to-face purchase: car dealerships, pawn shops, marketplace meetups, electronics, furniture. The category is a setting; the core product is shared.
+Strangers haggle face to face every day with no protection. The listing says "like new", the seller says "another guy offered $700", and then it's "cash only, or just Zelle me". The deal ends with a screenshot that may be fake. DEAL replaces that with a coached negotiation, a locked agreement and a verified card payment.
+
+The same core works for any face-to-face purchase: car dealerships, pawn shops, electronics, furniture. The category is a setting; the car is our 10-second "works anywhere" closer.
 
 **Pitch to Visa:**
-> "AI is about to negotiate and pay on people's behalf. DEAL makes sure every payment matches what was actually agreed to: secure for buyers, fewer disputes for merchants, more trust for the network."
+> "Peer-to-peer meetups are where in-person payments are least protected: fake 'payment sent' screenshots, Zelle scams, prices that change after a handshake. DEAL makes the negotiated agreement the payment rule and verifies the card payment on both phones before anything changes hands. That means safer buyers, sellers who actually get paid, and P2P volume moving onto the Visa network."
 
 ---
 
 ## 2. The Big Idea
 
-Most shopping AI helps you *find* or *buy* things. DEAL protects the moment that matters most: **paying**.
+Most shopping AI helps you *find* or *buy* things. DEAL protects the moments that go wrong between strangers: **inspecting, agreeing and paying**.
 
-**The negotiated agreement becomes the payment rule.** Once both buyer and seller confirm the deal, the payment terminal can only charge that amount. Any extra fee is blocked until the buyer explicitly approves it.
+- **The listing becomes the checklist.** DEAL imports the Marketplace listing (link, pasted text or screenshot) and its condition claims ("new tires last month", "no scratches"). When what you see doesn't match, the glasses tell you what to ask for: **"Tires worn: ask $40 off."**
+- **The negotiated agreement becomes the payment rule.** Once buyer and seller both confirm, the seller's phone (the terminal) can only charge that amount. "$20 for gas, I drove here" is **blocked** until the buyer explicitly approves it.
+- **The payment is verified, not claimed.** Both phones show the same card payment and receipt before the item changes hands. There is no screenshot to fake, and there's no irreversible Zelle transfer to a stranger.
 
 ---
 
 ## 3. How It Works
 
 ### Step 1: Prepare
-- Choose a category (car, pawn shop, marketplace, electronics, other).
+- Choose a category (marketplace, car, pawn shop, electronics, other).
+- **Marketplace: import the listing** (Facebook Marketplace link, pasted text or screenshot). DEAL extracts the title, asking price and **condition claims**. We never scrape Facebook: a link alone gets the demo listing, while text or a screenshot is read by Claude.
 - Enter the item, asking price, target price, and maximum budget.
 - DEAL shows comparable market prices. For the demo, these are pre-loaded JSON per category.
+- **At the meetup: condition check.** The buyer types what they see or snaps a photo. DEAL compares it to the listing's claims and puts a cue on the glasses ("Tires worn: ask $40 off").
 
 ### Step 2: Negotiate (glasses + buyer phone)
 - The buyer's phone listens and transcribes the conversation.
@@ -51,6 +57,10 @@ Most shopping AI helps you *find* or *buy* things. DEAL protects the moment that
 | Long pause after the buyer's offer | **Stay quiet** |
 | Offer near a known comparable | **Mention the $340 comparable** |
 | Fees not yet discussed | **Ask for the total, all fees included** |
+| "Another guy offered $700, he's coming at 5" | **Unverified buyer. Hold your offer.** |
+| "Cash only, or just Zelle me" | **Pay verified, not Zelle** |
+| Item doesn't match the listing ("new tires" are worn) | **Tires worn: ask $40 off** |
+| "$20 for gas, I drove here" after agreeing | **Agreed price stands. Decline.** (and blocked at the terminal) |
 
 ### Step 3: Lock the Deal
 - Buyer and seller **both tap confirm** (each on their own phone).
@@ -219,11 +229,14 @@ Most shopping AI helps you *find* or *buy* things. DEAL protects the moment that
 | **Seamless** | One flow: negotiate → agree → pay → receipt |
 | **Personalized** | Budget, target, and negotiation style shape every cue |
 | **Trust for both sides** | Buyers are protected; merchants and the network get fewer disputes |
+| **Verified P2P payment (scam prevention)** | Marketplace meetups move from cash, Zelle and "payment sent" screenshots to a card payment that both phones verify before the handoff. A fake screenshot can't fool a terminal, and the payment can't be sent first and then disappear. |
+
+**The P2P story (lead with this).** Peer-to-peer marketplaces are huge and almost entirely unprotected at the moment of payment. Common scams include fake payment screenshots, overpayment and refund tricks, "send a deposit first", and price changes after a handshake. DEAL puts a card network transaction in the middle of a stranger-to-stranger deal. The seller sees verified funds, the buyer pays exactly the agreed amount, and the dispute pack holds the listing, the condition mismatches, the agreement fingerprint and the receipt if anything goes wrong later. That brings P2P volume onto Visa rails, which are safer than cash or push payments.
 
 **Priorities, ranked:**
 1. **Agreement-locked payment (essential).** If Visa's sandbox supports spending limits or merchant restrictions on a credential, tie them to the agreement. If not, enforce in the backend before the payment request is sent, and pitch the Visa-native version as the roadmap.
 2. **Use Visa's own tools (high value).** Use Visa's developer sandbox if Cal Hacks provides access; otherwise Stripe test mode with Visa test cards. **Ask Visa mentors which APIs they want to see used.**
-3. **Dispute evidence pack (differentiator).** Shows understanding of Visa's side of the business: disputes cost merchants and the network money.
+3. **Dispute evidence pack (differentiator).** Shows understanding of Visa's side of the business: disputes cost merchants and the network money. For meetups it also includes the listing and the condition discrepancies ("listing said new tires last month; tires were worn").
 4. **Two-sided confirmation (trust).** Makes the agreement credible to merchants and answers "why would a seller use this?"
 5. **Personalization (expected).** Covered by budget/target/style.
 
@@ -312,17 +325,21 @@ Seller iPhone (SwiftUI, Seller mode)
 
 ---
 
-## 7. Demo Script (flagship: car purchase)
+## 7. Demo Script (flagship: Facebook Marketplace bike meetup; car is the 10-second closer)
 
-1. **Setup (phone).** Car listed at **$38,000**, target $34,500, max $36,000. Comparables load.
-2. **Negotiation (judge plays the salesperson from a short script, improvising freely).** The glasses view is **mirrored to the projector** in a split screen: glasses view, buyer phone dashboard, live transcript.
-3. **Tactic moment.** Salesperson asks "What monthly payment works for you?" → glasses: **"Redirect to total price — $489/mo × 72 = $35,208."**
-4. **Deal.** Price lands at **$34,600**. Both sides confirm. Agreement + fingerprint appear.
-5. **The payoff.** The salesperson's phone becomes the terminal. They try to add a **$1,200 protection package**. **Blocked.** Glasses flash red; buyer phone shows: *"This doesn't match what you agreed to at 2:14 PM,"* with the transcript line.
-6. **Resolution.** Corrected amount → buyer approves → simulated tap → Stripe test payment → receipt on both phones.
-7. **Close.** Summary screen: *"Asked $38,000, paid $34,600, blocked $1,200 in unagreed add-ons."* Then: *"Cars are just the start: pawn shops, marketplaces, anywhere you negotiate face to face."* (Optional: 10-second clip of a pawn shop session.)
+Script: `content/scripts/marketplace_bike.json`. Listing: `content/listings/marketplace_bike.json`. Run it end to end with `backend/scripts/demo-marketplace.sh`.
 
-**Fallbacks:** recorded video of the full working flow; scripted conversation mode if live audio fails in a noisy venue; phone teleprompter if the glasses fail. Clearly label role-play, illustrative pricing, and sandbox payments.
+1. **Hook (10 s).** "You found a bike on Facebook Marketplace. You're meeting a stranger in a parking lot. They want cash or Zelle. What protects you?"
+2. **Import the listing (buyer phone).** Paste the Marketplace link or a screenshot → **56cm Aluminum Road Bike, Shimano 105, $650**. Claims shown: *like new, new tires last month, no scratches, shifts perfectly.* Target $520, max $580. Comparables load.
+3. **Meetup (judge plays the seller from a short script, improvising freely).** The glasses view is **mirrored to the projector** in a split screen: glasses view, buyer phone dashboard, live transcript.
+4. **Condition check.** The buyer photographs the tires (or types "tires are worn"). The glasses show **"Tires worn: ask $40 off"** with *Listing says "new tires last month"*.
+5. **Tactic moments.** "Another guy offered me $700 and he's coming at five" → **"Unverified buyer. Hold your offer."** Then "Cash only, or just Zelle me now" → **"Pay verified, not Zelle"**, with *Zelle and cash can't be reversed* on the second line.
+6. **Deal.** The buyer uses the tires and the comparables. The price lands at **$520** with the pedals included and "no extra charges". Both phones confirm, and the agreement + fingerprint appear.
+7. **The payoff.** The seller's phone becomes the terminal. They say "$20 for gas, I drove here" and add it. **Blocked.** The glasses flash red, and the buyer's phone shows *"This doesn't match what you agreed to at 2:14 PM ('Five-twenty, that's everything. No extra charges.')"*.
+8. **Resolution.** The buyer rejects. The seller charges $520 → simulated tap → Stripe test payment → **the receipt appears on both phones before the bike changes hands.** No screenshot to fake.
+9. **Close (car, 10 s).** Summary: *"Asked $650, paid $520, blocked $20."* Then cut to the car: *"Works anywhere you negotiate face to face."* The dealer tries a $1,200 protection package: **blocked**, *"Asked $38,000, paid $34,600, blocked $1,200."* (`car_accord` script + `demo.sh`.)
+
+**Fallbacks:** recorded video of the full working flow; scripted conversation mode if live audio fails in a noisy venue; typed observation instead of a photo for the condition check; phone teleprompter if the glasses fail. Clearly label role-play, illustrative pricing and listings, and sandbox payments.
 
 ---
 
@@ -405,7 +422,8 @@ Full replay, insights dashboard, personalized coaching over time, live market re
 | Node.js | ✅ v24 installed |
 | Disk space | ✅ ~769 GB free |
 | API keys (Anthropic, Supabase, Stripe) | ❓ Unknown — check `backend/.env` |
-| Backend code | ✅ Mock mode done: 78 tests pass, `scripts/demo.sh` passes end to end. Real Claude/Supabase/Stripe paths untested (no keys); `schema.sql` not yet run in Supabase. Contract additions listed in `backend/README.md` |
+| Marketplace flagship (content + backend) | ✅ Mock mode: `marketplace_bike` script (19 lines), canned listing, 4 new tactics, `seller_extra_fee_marketplace.json` ($20 gas fee → blocked). `POST /listings/parse`, `POST /sessions {listing}`, `POST /sessions/:id/condition-check`, dispute pack with listing + discrepancies. 118 tests pass; `scripts/demo-marketplace.sh` and `scripts/demo.sh` both pass end to end. The real Claude listing/vision paths are written but untested (no live key run). Supabase needs the new columns in `schema.sql` |
+| Backend code | ✅ Mock mode done: 118 tests pass, `scripts/demo.sh` passes end to end. Real Claude/Supabase/Stripe paths untested (no keys); `schema.sql` not yet run in Supabase. Contract additions listed in `backend/README.md` |
 | Content (scripts, comparables, tactics) | ✅ Done (`content/README.md` has conventions, incl. extra `cue_detail` field) |
 | iOS app | ✅ Simulator / 🟡 device. `xcodegen` + `xcodebuild` build clean (0 warnings) for iOS Simulator and generic iOS device (unsigned); Supabase SPM 2.55.4 resolves. `DEALUITests` (XCUITest) runs the whole 12.6 flow on an iPhone 18 Pro Simulator vs the mock backend, both sides: buyer (mode picker, B1 Home, B2, B3 scripted, B4 draft and locked, B5 blocked $1,200, reject, B6, then B1 → B7 Purchase History → Deal Detail → Export Dispute Pack) and seller (S1 code entry, S2, S3, S4 terminal, add line item → waiting, buyer rejects, Tap to Pay, S5). Not yet run on a physical iPhone: needs a signing Team. Camera QR, live mic/speech and Supabase Realtime are untested. See `ios/README.md` |
 | B1 Home + B7 History / Deal Detail | ✅ B1: Start Negotiation, active-session card (resume), recent purchases, totals (spent, extra charges blocked, saved). B7: list (item, final price, savings, date) → Deal Detail (offer timeline, key cues, agreement, blocked charges, receipt, **Export Dispute Pack** via ShareLink of `GET /sessions/:id/dispute-pack` JSON). Covered by `testBuyerFlow` |
@@ -491,7 +509,8 @@ All bodies are JSON. Money is in **whole cents as integers** in the API and data
 
 | Method & path | Body | Returns | Notes |
 |---|---|---|---|
-| `POST /sessions` | `{category, item, asking_price, target_price, max_budget, style}` | `Session` (incl. `join_code`) | Buyer B2 |
+| `POST /listings/parse` | `{url?, text?, image_base64?}` (at least one) | `Listing` | Buyer B2 "Import listing". Mock: canned bike listing (keeps `url`). Real: `AGREEMENT_MODEL` reads text / screenshot (vision), zod-validated, retry once. **No scraping**: a bare URL gets the canned listing |
+| `POST /sessions` | `{category, item, asking_price, target_price, max_budget, style, listing?}` | `Session` (incl. `join_code`, `listing`, `condition_checks`) | Buyer B2. `listing` stored as `session.listing` |
 | `POST /sessions/join` | `{join_code}` | `Session` | Seller S1 |
 | `GET /sessions` | — | `Session[]` with final price | B7 history |
 | `GET /sessions/:id` | — | `{session, events, agreement, payment_requests, receipt}` | Full state |
@@ -503,7 +522,14 @@ All bodies are JSON. Money is in **whole cents as integers** in the API and data
 | `POST /sessions/:id/payment-requests` | `{line_items: [{label, amount}]}` | `PaymentRequest` | Seller S4. Status `approved` if it matches, else `blocked` + explanation |
 | `POST /payment-requests/:id/decision` | `{decision: "approve"\|"reject"}` | `PaymentRequest` | Buyer B5. Approve = buyer accepts the change (agreement amended, re-fingerprinted, re-confirmed by buyer) |
 | `POST /payment-requests/:id/pay` | — | `Receipt` | Only if status `approved`. Creates + confirms a Stripe test PaymentIntent server-side with test payment method `pm_card_visa` |
-| `GET /sessions/:id/dispute-pack` | — | JSON (and later PDF) | Tomorrow |
+| `POST /sessions/:id/condition-check` | `{observation?, image_base64?}` (at least one) | `{discrepancies: [{claim, observed, suggested_discount, cue}], event}` (201) | B3 "Check condition". Compares to `session.listing.condition_claims` (409 if no listing). Inserts an `Event` with `kind: "condition_check"` carrying the cue, so it reaches the glasses like any cue; appends to `session.condition_checks`. Mock: worn tires → $40 off → "Tires worn: ask $40 off" |
+| `GET /sessions/:id/dispute-pack` | — | JSON (and later PDF) | Includes `listing` and `condition_discrepancies` when present |
+
+**Marketplace types (money in cents):**
+- `Listing = {title, asking_price, category: "marketplace", condition_claims: string[], description, location?, seller_name?, source: "facebook_marketplace" | "other", url?}`
+- `Discrepancy = {claim, observed, suggested_discount, cue}`. `claim` is one of the listing's `condition_claims`, and `cue` is 3–6 words.
+- `Event.kind` is `"speech"` (a transcript line) or `"condition_check"`.
+- `Session.condition_checks` is `[{id, at, observation, had_image, discrepancies, event_id}]`.
 
 **Realtime:** iOS subscribes to Supabase changes on `events`, `agreements`, `payment_requests`, `receipts` filtered by `session_id`. That is how the seller phone sees confirmations and the buyer phone sees blocked charges instantly.
 

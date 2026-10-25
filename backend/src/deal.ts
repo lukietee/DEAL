@@ -5,11 +5,12 @@ import type { Config } from "./config.js";
 import { getScript, getScriptFile } from "./content.js";
 import { computeFingerprint, fingerprintPayload, shortFingerprint, verifyFingerprint } from "./fingerprint.js";
 import { checkPaymentRequest, matchLineItem, sumLineItems } from "./mismatch.js";
+import { type ConditionCheck, type ConditionInput, type Discrepancy, type Listing, type ListingInput } from "./listing.js";
 import { formatCentsShort } from "./money.js";
 import type { Payments } from "./payments/index.js";
 import type { Store } from "./store/index.js";
 import type {
-  Agreement, CueExtraction, DealEvent, Fee, LineItem, PaymentRequest, Receipt, Session, Speaker, Term,
+  Agreement, CueExtraction, DealEvent, EventKind, Fee, LineItem, PaymentRequest, Receipt, Session, Speaker, Term,
 } from "./types.js";
 
 export class HttpError extends Error {
@@ -38,6 +39,7 @@ export interface NewSessionInput {
   target_price: number;
   max_budget: number;
   style: string;
+  listing?: Listing | null;
 }
 
 export interface TermCorrection {
@@ -98,6 +100,8 @@ export class Deal {
       current_offer: null,
       current_offer_by: null,
       terms: [],
+      listing: input.listing ?? null,
+      condition_checks: [],
       created_at: t,
       updated_at: t,
     };
@@ -156,7 +160,7 @@ export class Deal {
 
   // ---------- events + live cues ----------
 
-  async addEvent(sessionId: string, speaker: Speaker, text: string, opts: { scriptLineId?: string; scriptId?: string; extraction?: CueExtraction } = {}): Promise<DealEvent> {
+  async addEvent(sessionId: string, speaker: Speaker, text: string, opts: { scriptLineId?: string; scriptId?: string; extraction?: CueExtraction; kind?: EventKind } = {}): Promise<DealEvent> {
     return this.withLock(sessionId, async () => {
       const session = await this.mustSession(sessionId);
       const events = await this.store.listEvents(sessionId);
@@ -176,6 +180,7 @@ export class Deal {
         cue_detail: extraction.cue_detail ?? null,
         status_color: extraction.status,
         script_line_id: opts.scriptLineId ?? null,
+        kind: opts.kind ?? "speech",
       };
       const saved = await this.store.insertEvent(event);
       await this.store.updateSession(sessionId, {
@@ -185,6 +190,57 @@ export class Deal {
       });
       return saved;
     });
+  }
+
+  // ---------- marketplace listing + condition check ----------
+
+  /** POST /listings/parse: canned in mock mode, Claude (text or screenshot) in real mode. Never scrapes. */
+  async parseListing(input: ListingInput): Promise<Listing> {
+    return this.ai.parseListing(input);
+  }
+
+  /**
+   * POST /sessions/:id/condition-check: compare what the buyer sees against session.listing.condition_claims.
+   * The result is inserted as an event (kind "condition_check", speaker "buyer") carrying the cue, so it flows to
+   * the glasses / teleprompter exactly like a transcript cue, and is appended to session.condition_checks.
+   */
+  async conditionCheck(sessionId: string, input: ConditionInput): Promise<{ discrepancies: Discrepancy[]; event: DealEvent }> {
+    const session = await this.mustSession(sessionId);
+    if (!session.listing) throw new HttpError(409, "session has no listing; attach one via POST /sessions {listing} (from POST /listings/parse)");
+    const discrepancies = await this.ai.conditionCheck(session.listing, input);
+    const total = discrepancies.reduce((s, d) => s + d.suggested_discount, 0);
+    const first = discrepancies[0];
+    const extraction: CueExtraction = {
+      current_offer: session.current_offer,
+      offer_by: session.current_offer_by,
+      new_terms: [],
+      tactic_detected: first ? "undisclosed_condition" : null,
+      cue: first ? first.cue : "Matches the listing. Proceed.",
+      cue_detail: first
+        ? discrepancies.length > 1
+          ? `${discrepancies.length} issues, ask ${formatCentsShort(total)} off`
+          : `Listing says "${first.claim}"`
+        : null,
+      status: first ? (session.current_offer != null && session.current_offer > session.max_budget ? "red" : "yellow") : "green",
+    };
+    const what = input.observation?.trim().replace(/[.!?]+$/, "") || "photo of the item";
+    const text = first
+      ? `Condition check: ${what}. ${discrepancies.map((d) => `Listing says "${d.claim}", observed: ${d.observed}.`).join(" ")}`
+      : `Condition check: ${what}. Matches the listing.`;
+    const event = await this.addEvent(sessionId, "buyer", text, { extraction, kind: "condition_check" });
+    await this.withLock(sessionId, async () => {
+      const s = await this.mustSession(sessionId);
+      const check: ConditionCheck = {
+        id: newId("cc"),
+        at: event.timestamp,
+        observation: input.observation?.trim() || null,
+        had_image: !!input.image_base64,
+        discrepancies,
+        event_id: event.id,
+      };
+      await this.store.updateSession(sessionId, { condition_checks: [...(s.condition_checks ?? []), check] });
+    });
+    return { discrepancies, event };
   }
 
   async playScript(sessionId: string, scriptId: string, intervalMs?: number): Promise<ScriptRun> {
@@ -441,6 +497,8 @@ export class Deal {
     const a = state.agreement;
     const sourceIds = new Set(a?.source_event_ids ?? []);
     const blockedIds = new Set(state.payment_requests.map((p) => p.mismatch?.source_event_id).filter(Boolean) as string[]);
+    const checks = state.session.condition_checks ?? [];
+    for (const c of checks) blockedIds.add(c.event_id);
     return {
       generated_at: now(),
       format: "deal-dispute-pack/v1",
@@ -453,13 +511,15 @@ export class Deal {
       transcript_excerpts: state.events.filter((e) => sourceIds.has(e.id) || blockedIds.has(e.id)).map((e) => ({ id: e.id, speaker: e.speaker, text: e.text, timestamp: e.timestamp })),
       payment_requests: state.payment_requests,
       receipt: state.receipt,
+      listing: state.session.listing ?? null,
+      condition_discrepancies: checks.flatMap((c) => c.discrepancies.map((d) => ({ ...d, checked_at: c.at, event_id: c.event_id }))),
       disclaimer: "Sandbox demo. Payments are Stripe test mode; pricing is illustrative.",
     };
   }
 
-  /** Demo helper: the seller_extra_fee.json content (blocked + corrected requests). */
-  sellerExtraFee() {
-    return getScriptFile("seller_extra_fee");
+  /** Demo helper: the seller_extra_fee*.json content (blocked + corrected requests) for a script. */
+  sellerExtraFee(scriptId = "car_accord") {
+    return getScriptFile(scriptId === "marketplace_bike" ? "seller_extra_fee_marketplace" : "seller_extra_fee");
   }
 }
 

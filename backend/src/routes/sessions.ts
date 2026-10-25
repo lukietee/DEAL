@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getComparables, listScriptIds, normalizeCategory } from "../content.js";
 import { HttpError, type Deal } from "../deal.js";
+import { ListingSchema } from "../listing.js";
 import { parseBody, type IdParams } from "./util.js";
 
 const cents = z.number().int().nonnegative();
@@ -13,6 +14,7 @@ const CreateSession = z.object({
   target_price: cents,
   max_budget: cents,
   style: z.string().min(1).default("firm").transform((s) => s.toLowerCase()),
+  listing: ListingSchema.nullish(), // from POST /listings/parse; stored as session.listing
 });
 
 export function sessionRoutes(app: FastifyInstance, deal: Deal) {

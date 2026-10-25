@@ -21,6 +21,8 @@ create table if not exists public.sessions (
   current_offer    bigint,
   current_offer_by text check (current_offer_by in ('buyer', 'seller')),
   terms            jsonb       not null default '[]'::jsonb,   -- Term[] (B3 "Terms so far", PATCH /terms)
+  listing          jsonb,                                       -- Listing from POST /listings/parse (marketplace)
+  condition_checks jsonb       not null default '[]'::jsonb,   -- ConditionCheck[] from POST /sessions/:id/condition-check
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
@@ -43,8 +45,14 @@ create table if not exists public.events (
   cue_detail       text,                                      -- second glasses line, e.g. "$489/mo × 72 = $35,208"
   status_color     text        not null default 'yellow' check (status_color in ('green', 'yellow', 'red')),
   script_line_id   text,                                      -- "evt_01" when inserted by /script/play
+  kind             text        not null default 'speech' check (kind in ('speech', 'condition_check')),
   unique (session_id, seq)
 );
+-- Marketplace additions, for databases created before them (no-ops on a fresh run).
+alter table public.sessions add column if not exists listing jsonb;
+alter table public.sessions add column if not exists condition_checks jsonb not null default '[]'::jsonb;
+alter table public.events   add column if not exists kind text not null default 'speech';
+
 create index if not exists events_session_idx on public.events (session_id, seq);
 
 -- ---------------------------------------------------------------- agreements

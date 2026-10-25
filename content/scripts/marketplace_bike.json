@@ -1,0 +1,372 @@
+{
+  "id": "marketplace_bike",
+  "category": "marketplace",
+  "item": "56cm Aluminum Road Bike, Shimano 105",
+  "asking_price": 65000,
+  "target_price": 52000,
+  "max_budget": 58000,
+  "style": "firm",
+  "illustrative": true,
+  "disclaimer": "Role-play Facebook Marketplace meetup. All pricing is illustrative and not a real listing.",
+  "listing_id": "marketplace_bike",
+  "lines": [
+    {
+      "id": "evt_01",
+      "speaker": "seller",
+      "text": "Hey, you must be here about the bike. Fifty-six aluminum frame, full Shimano 105. I've got it listed at six-fifty.",
+      "delay_ms": 1500,
+      "expected": {
+        "current_offer": 65000,
+        "offer_by": "seller",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 65000
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Inspect it before talking price",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_02",
+      "speaker": "buyer",
+      "text": "Thanks for meeting up. Mind if I look it over against the listing before we talk numbers?",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 65000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Check it against listing.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_03",
+      "speaker": "buyer",
+      "text": "The listing said new tires last month, but these are pretty worn. The rear one has cracks in the sidewall.",
+      "delay_ms": 5000,
+      "expected": {
+        "current_offer": 65000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": "undisclosed_condition",
+        "cue": "Tires worn: ask $40 off",
+        "cue_detail": "Listing says \"new tires last month\"",
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_04",
+      "speaker": "seller",
+      "text": "Oh, those? They've got plenty of miles left. Honestly the bike is basically like new.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 65000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Hold the tire point",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_05",
+      "speaker": "buyer",
+      "text": "A Tiagra bike with worn tires is listed at four-eighty, and a smaller 105 is at five-ninety. I can do four seventy-five.",
+      "delay_ms": 4000,
+      "expected": {
+        "current_offer": 47500,
+        "offer_by": "buyer",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 47500
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Low anchor set. Stay quiet.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_06",
+      "speaker": "seller",
+      "text": "Four seventy-five? No way. Another guy offered me seven hundred and he's coming at five.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 47500,
+        "offer_by": "buyer",
+        "new_terms": [],
+        "tactic_detected": "fake_competing_buyer",
+        "cue": "Unverified buyer. Hold your offer.",
+        "cue_detail": "Still listed at $650",
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_07",
+      "speaker": "buyer",
+      "text": "If he pays seven hundred, you should take it. But it's still listed at six-fifty, so I don't mind waiting.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 47500,
+        "offer_by": "buyer",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Calm. Let the bluff fold.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_08",
+      "speaker": "seller",
+      "text": "Okay, okay. I could do six hundred, but it's cash only. Or just Zelle me now before you take it for a ride.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 60000,
+        "offer_by": "seller",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 60000
+          }
+        ],
+        "tactic_detected": "cash_zelle_pressure",
+        "cue": "Pay verified, not Zelle",
+        "cue_detail": "Zelle and cash can't be reversed",
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_09",
+      "speaker": "buyer",
+      "text": "I'd rather pay through DEAL on your phone. You see the payment verified, I get a receipt, and no money moves before the handoff.",
+      "delay_ms": 4000,
+      "expected": {
+        "current_offer": 60000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Good. Verified payment only.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_10",
+      "speaker": "seller",
+      "text": "Fine, DEAL works for me. But it's six hundred.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 60000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Above max. Bring up tires.",
+        "cue_detail": null,
+        "status": "red"
+      }
+    },
+    {
+      "id": "evt_11",
+      "speaker": "buyer",
+      "text": "Those tires need replacing, that's forty bucks right there. Five hundred and I'll take it today.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 50000,
+        "offer_by": "buyer",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 50000
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Clear reason. Stay quiet.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_12",
+      "speaker": "seller",
+      "text": "Five hundred? I paid nine hundred for this thing two years ago.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 50000,
+        "offer_by": "buyer",
+        "new_terms": [],
+        "tactic_detected": "anchoring_high",
+        "cue": "Normal pushback. Hold firm.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_13",
+      "speaker": "buyer",
+      "text": "I get it, but used bikes go for what they go for. I can stretch to five-twenty.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 52000,
+        "offer_by": "buyer",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 52000
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "At target. Hold here.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_14",
+      "speaker": "seller",
+      "text": "Meet me at five-fifty and it's yours.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 55000,
+        "offer_by": "seller",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 55000
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Under max. Hold at $520.",
+        "cue_detail": null,
+        "status": "yellow"
+      }
+    },
+    {
+      "id": "evt_15",
+      "speaker": "buyer",
+      "text": "Five-twenty is fair with the tire work it needs. That's my number.",
+      "delay_ms": 3500,
+      "expected": {
+        "current_offer": 52000,
+        "offer_by": "buyer",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 52000
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Firm and fair. Now wait.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_16",
+      "speaker": "seller",
+      "text": "Alright, five-twenty. You're killing me. I'll leave the pedals on it too.",
+      "delay_ms": 4500,
+      "expected": {
+        "current_offer": 52000,
+        "offer_by": "seller",
+        "new_terms": [
+          {
+            "type": "price",
+            "label": "bike price",
+            "amount": 52000
+          },
+          {
+            "type": "item",
+            "label": "pedals",
+            "amount": 0
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Deal reached. Confirm the total.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_17",
+      "speaker": "buyer",
+      "text": "Great. So five hundred twenty total with the pedals, nothing else added, paid through DEAL?",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 52000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Confirm nothing else added",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_18",
+      "speaker": "seller",
+      "text": "Yep. Five-twenty, that's everything. No extra charges.",
+      "delay_ms": 3000,
+      "expected": {
+        "current_offer": 52000,
+        "offer_by": "seller",
+        "new_terms": [
+          {
+            "type": "promise",
+            "label": "no extra charges",
+            "amount": 0
+          }
+        ],
+        "tactic_detected": null,
+        "cue": "Total confirmed. Lock the deal.",
+        "cue_detail": null,
+        "status": "green"
+      }
+    },
+    {
+      "id": "evt_19",
+      "speaker": "buyer",
+      "text": "Perfect. Let's lock it in on both phones.",
+      "delay_ms": 2500,
+      "expected": {
+        "current_offer": 52000,
+        "offer_by": "seller",
+        "new_terms": [],
+        "tactic_detected": null,
+        "cue": "Tap Lock Deal now",
+        "cue_detail": null,
+        "status": "green"
+      }
+    }
+  ],
+  "expected_agreement": {
+    "price": 52000,
+    "items": [
+      "56cm Aluminum Road Bike, Shimano 105",
+      "pedals"
+    ],
+    "fees": [],
+    "total": 52000,
+    "source_event_ids": [
+      "evt_16",
+      "evt_18"
+    ],
+    "open_questions": []
+  }
+}

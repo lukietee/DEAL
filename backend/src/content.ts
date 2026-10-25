@@ -141,3 +141,9 @@ export function getScriptFile(id: string): unknown | null {
   if (!/^[a-z0-9_-]+$/i.test(id)) return null;
   return readJson("scripts", `${id}.json`);
 }
+
+/** Raw JSON of a canned listing under content/listings/ (e.g. marketplace_bike). */
+export function getListingFile(id: string): unknown | null {
+  if (!/^[a-z0-9_-]+$/i.test(id)) return null;
+  return readJson("listings", `${id}.json`);
+}

@@ -6,11 +6,14 @@ Demo data for DEAL. The backend's `MOCK_MODE` reads it in place of Claude. **All
 
 | File | What it is |
 |---|---|
-| `scripts/car_accord.json` | Flagship demo (Section 7): 2023 Honda Accord EX. The asking price is $38,000, the target $34,500 and the max $36,000. The deal lands at $34,600 with the doc fee waived and floor mats included. 25 lines. |
+| `scripts/marketplace_bike.json` | **Flagship demo (Section 7): Facebook Marketplace meetup.** "56cm Aluminum Road Bike, Shimano 105" listed at $650; target $520, max $580. The seller downplays worn tires (listing said "new tires last month"), claims another guy offered $700 and is coming at 5 (`fake_competing_buyer`), and pushes cash only / Zelle (`cash_zelle_pressure`). The buyer uses the tires and the comparables. The deal lands at $520 with the pedals included and "no extra charges". 19 lines. |
+| `scripts/seller_extra_fee_marketplace.json` | The bike demo's payment requests after agreement: `blocked_request` adds `"gas fee"` $20 ("$20 for gas, I drove here"), and `corrected_request` is exactly $520. Same structure as `seller_extra_fee.json`. |
+| `listings/marketplace_bike.json` | Canned parsed listing (the `Listing` shape from `POST /listings/parse`) for the bike, with `condition_claims` "like new", "new tires last month", "no scratches", "shifts perfectly". Mock mode returns it for every parse. |
+| `scripts/car_accord.json` | Secondary "works anywhere" demo (Section 7 closer): 2023 Honda Accord EX. The asking price is $38,000, the target $34,500 and the max $36,000. The deal lands at $34,600 with the doc fee waived and floor mats included. 25 lines. |
 | `scripts/pawn_guitar.json` | Pawn shop sale of a used Fender Player Stratocaster. The asking price is $650, the target $500 and the max $575. The deal lands at $525 with a gig bag, a tremolo arm and a 7-day return. 13 lines. |
 | `scripts/seller_extra_fee.json` | The car demo's payment requests after agreement: `blocked_request` adds a $1,200 protection package, and `corrected_request` matches the agreement exactly. |
 | `comparables/{car,pawn_shop,marketplace,electronics,other}.json` | 3–4 illustrative comparable listings for each category. |
-| `tactics.json` | 10 sales tactics, each with detection hints and a cue template. |
+| `tactics.json` | 14 sales tactics, each with detection hints and a cue template. The marketplace ones are `fake_competing_buyer`, `cash_zelle_pressure`, `price_raised_after_agreement` (in chat or in person, e.g. gas money) and `undisclosed_condition`. |
 
 ## Script format
 
@@ -55,6 +58,8 @@ A line item `label` must equal one of the agreement's `items[]` strings or `fees
 - Other included items and fees can be listed. Items take `amount: 0`, and a fee's amount must equal its agreement amount (the waived doc fee is `0`).
 - A line item whose label is not in the agreement is blocked. In the demo that is `"protection package"`, 120000. The line items must also add up to `agreement.total`.
 
+For the bike demo, `blocked_request` sums to 54000 (52000 + `"gas fee"` 2000) and `corrected_request` sums to 52000. `contradicting_event_id` is `evt_18`, the seller's line "No extra charges."
+
 For the car demo, `blocked_request` sums to 3580000 and `corrected_request` sums to 3460000. `blocked_request.contradicting_event_id` is `evt_24`, the seller's line "No other fees, no add-ons". Use it for the mismatch explanation.
 
 ## Comparables format
@@ -69,3 +74,18 @@ In `car.json`, `car_comp_01` costs $34,600. That is $340 below the seller's $34,
 ## Tactics format
 
 `{ id, name, detection_hints[], cue_template, cue_detail_template, status }`. Templates use `{placeholder}` slots, for example `${monthly}/mo × {months} = ${total}`.
+
+New templates use only `{asking}`, `{agreed}`, `{label}`, `{amount}` and `{claim}`. The mock fallback fills what it knows and drops the detail line if a placeholder is left. `cue_template` must be plain text (no placeholders), because the fallback shows it as is.
+
+## Listing format (`listings/*.json`)
+
+The `Listing` contract from `POST /listings/parse` (money in cents):
+
+```json
+{ "title": "...", "asking_price": 65000, "category": "marketplace",
+  "condition_claims": ["like new", "new tires last month", "no scratches"],
+  "description": "...", "location": "Berkeley, CA", "seller_name": "Jordan M.",
+  "source": "facebook_marketplace", "url": "optional" }
+```
+
+`condition_claims` are short, near-verbatim promises from the listing. The condition check compares what the buyer sees against them. In mock mode, worn tires contradict "new tires last month" and give a $40 discount with the cue "Tires worn: ask $40 off". In the bike script, `evt_03` (the buyer noticing the tires) carries the same cue.

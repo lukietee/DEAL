@@ -2,12 +2,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { z } from "zod";
 import type { Config } from "../config.js";
 import { AgreementDraftSchema, CueExtractionSchema, getComparables, getTactics } from "../content.js";
+import {
+  ConditionModelSchema, ListingModelSchema, decodeImage, isFacebookUrl, mockConditionCheck, mockParseListing,
+  type ConditionInput, type Discrepancy, type Listing, type ListingInput,
+} from "../listing.js";
 import { mockAgreement, type AgreementDraft } from "../mock/agreement.js";
 import { mockCue } from "../mock/extract.js";
 import { templateExplanation, formatClock } from "../mismatch.js";
 import { formatCents } from "../money.js";
 import type { CueExtraction, DealEvent, LineItem, MismatchDetails, Session, Speaker } from "../types.js";
-import { AGREEMENT_SYSTEM, CUE_SYSTEM, MISMATCH_SYSTEM, agreementUserPrompt, cueUserPrompt } from "./prompts.js";
+import {
+  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, LISTING_SYSTEM, MISMATCH_SYSTEM, agreementUserPrompt, cueUserPrompt,
+} from "./prompts.js";
 
 export interface CueInput {
   session: Session;
@@ -22,6 +28,8 @@ export interface Ai {
   cue(input: CueInput): Promise<CueExtraction>;
   agreement(session: Session, events: DealEvent[]): Promise<AgreementDraft>;
   explainMismatch(m: MismatchDetails, lineItems: LineItem[]): Promise<string>;
+  parseListing(input: ListingInput): Promise<Listing>;
+  conditionCheck(listing: Listing, input: ConditionInput): Promise<Discrepancy[]>;
 }
 
 type Logger = { warn: (obj: unknown, msg?: string) => void };
@@ -38,6 +46,24 @@ export class MockAi implements Ai {
   async explainMismatch(m: MismatchDetails) {
     return templateExplanation(m, this.timeZone);
   }
+  async parseListing(input: ListingInput) {
+    return mockParseListing(input);
+  }
+  async conditionCheck(listing: Listing, input: ConditionInput) {
+    return mockConditionCheck(listing, input);
+  }
+}
+
+type UserContent = string | Anthropic.ContentBlockParam[];
+
+/** Text plus an optional base64 image (vision) as one user turn. */
+function withImage(text: string, imageBase64?: string): UserContent {
+  if (!imageBase64) return text;
+  const { data, media_type } = decodeImage(imageBase64);
+  return [
+    { type: "image", source: { type: "base64", media_type, data } },
+    { type: "text", text },
+  ];
 }
 
 /** Extract the first JSON object from model text (tolerates code fences / stray prose). */
@@ -67,7 +93,7 @@ export class ClaudeAi implements Ai {
     this.fallback = new MockAi(cfg.displayTimeZone);
   }
 
-  private async call(model: string, system: string, user: string, maxTokens: number, effort: "low" | "medium"): Promise<Anthropic.Message> {
+  private async call(model: string, system: string, user: UserContent, maxTokens: number, effort: "low" | "medium"): Promise<Anthropic.Message> {
     return this.client.messages.create({
       model,
       max_tokens: maxTokens,
@@ -78,7 +104,7 @@ export class ClaudeAi implements Ai {
   }
 
   /** Call the model, validate with zod, retry once (with the validation error) on invalid JSON. */
-  private async structured<S extends z.ZodTypeAny>(model: string, system: string, user: string, schema: S, effort: "low" | "medium"): Promise<z.infer<S>> {
+  private async structured<S extends z.ZodTypeAny>(model: string, system: string, user: UserContent, schema: S, effort: "low" | "medium"): Promise<z.infer<S>> {
     const first = await this.call(model, system, user, 4000, effort);
     const firstText = textOf(first);
     try {
@@ -126,6 +152,43 @@ export class ClaudeAi implements Ai {
     } catch (err) {
       this.log.warn({ err: String(err) }, "agreement model failed; using mock agreement");
       return this.fallback.agreement(session, events);
+    }
+  }
+
+  async parseListing(input: ListingInput): Promise<Listing> {
+    // A bare URL can't be read without scraping Facebook (which we don't do): use the canned listing.
+    if (!input.text && !input.image_base64) {
+      this.log.warn({}, "listing parse with only a url: no scraping, returning the canned listing");
+      return this.fallback.parseListing(input);
+    }
+    try {
+      const user = JSON.stringify({ url: input.url ?? null, pasted_text: input.text ?? null, screenshot_attached: !!input.image_base64 }, null, 1);
+      const listing = await this.structured(this.cfg.agreementModel, LISTING_SYSTEM, withImage(user, input.image_base64), ListingModelSchema, "low");
+      if (input.url) listing.url = input.url;
+      if (isFacebookUrl(input.url)) listing.source = "facebook_marketplace";
+      return listing;
+    } catch (err) {
+      this.log.warn({ err: String(err) }, "listing model failed; using canned listing");
+      return this.fallback.parseListing(input);
+    }
+  }
+
+  async conditionCheck(listing: Listing, input: ConditionInput): Promise<Discrepancy[]> {
+    try {
+      const user = JSON.stringify(
+        { listing: { title: listing.title, condition_claims: listing.condition_claims, description: listing.description, asking_price: listing.asking_price }, buyer_observation: input.observation ?? null, photo_attached: !!input.image_base64 },
+        null,
+        1,
+      );
+      const out = await this.structured(this.cfg.agreementModel, CONDITION_SYSTEM, withImage(user, input.image_base64), ConditionModelSchema, "low");
+      // Guard-rail: only claims the listing actually made.
+      const claims = new Map(listing.condition_claims.map((c) => [c.trim().toLowerCase(), c]));
+      return out.discrepancies
+        .map((d) => ({ ...d, claim: claims.get(d.claim.trim().toLowerCase()) ?? d.claim }))
+        .filter((d) => claims.has(d.claim.trim().toLowerCase()));
+    } catch (err) {
+      this.log.warn({ err: String(err) }, "condition model failed; using mock condition check");
+      return this.fallback.conditionCheck(listing, input);
     }
   }
 
