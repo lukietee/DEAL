@@ -11,6 +11,10 @@
 //   → wait DisplayState.started → display.send(FlexBox{…}) on every cue change.
 // Each `send` replaces the whole glasses screen. Sends are coalesced to at most ~3 per second.
 // If the display stops (temple back gesture, disconnect, session stop) DEAL re-attaches.
+//
+// Look mode rides on the same session: `GlassesCamera` / `GlassesInputs` register as session
+// clients (`addSessionClient`) and are attached on every `.started`, detached on teardown.
+// `showLook(_:)` puts the Look card above whatever cue / standby card is showing.
 
 import Foundation
 import Observation
@@ -57,6 +61,8 @@ final class MetaGlassesDisplay: GlassesDisplay {
 
     private(set) var status: MetaGlassesStatus = .off
     private(set) var currentCue: GlassesCue?
+    /// Look mode's highlighted item. While set, the glasses show the Look card instead of the cue.
+    private(set) var currentLook: LookHighlight?
     private(set) var deviceName: String?
     private(set) var lastError: String?
     private(set) var registrationDescription = "Not configured"
@@ -87,6 +93,13 @@ final class MetaGlassesDisplay: GlassesDisplay {
     // Send coalescing: `cueRevision` bumps on show/clear, `sentRevision` = last revision on glass.
     @ObservationIgnored private var cueRevision = 0
     @ObservationIgnored private var sentRevision = -1
+    /// The screen under the Look card is the standby card (not a cleared screen).
+    @ObservationIgnored private var baseIsStandby = false
+
+    /// Extra capabilities sharing this session (Look mode's camera + inputs), by key.
+    @ObservationIgnored private var sessionClients: [String: SessionClient] = [:]
+    /// The session once it reported `.started` (capabilities can only be added then).
+    @ObservationIgnored private var startedSession: DeviceSession?
     @ObservationIgnored private var lastSendAt: ContinuousClock.Instant?
     private static let minSendInterval: Duration = .milliseconds(350)   // ≤ ~3 sends/s
     private static let maxReconnectAttempts = 5
@@ -192,6 +205,41 @@ final class MetaGlassesDisplay: GlassesDisplay {
         scheduleSend()
     }
 
+    /// Show the Look card for a highlighted item, or nil to drop it and go back to the cue /
+    /// standby card underneath. The item's box moves every frame; only card content resends.
+    func showLook(_ highlight: LookHighlight?) {
+        guard highlight != currentLook else { return }
+        let changed = !Self.sameLookCard(highlight, currentLook)
+        currentLook = highlight
+        guard changed else { return }
+        cueRevision += 1
+        scheduleSend()
+    }
+
+    // MARK: - Session clients (Look mode)
+
+    struct SessionClient {
+        /// Add the capability (`addCamera`, `addInputs`…). Runs on every session `.started`.
+        let attach: @MainActor (DeviceSession) -> Void
+        /// Drop it. Runs before the session is stopped (disconnect, reconnect, removal).
+        let detach: @MainActor () -> Void
+    }
+
+    /// Attach a capability to the display's session, now if it has started, and again after
+    /// every reconnect. Doesn't connect the glasses by itself.
+    func addSessionClient(_ key: String, attach: @escaping @MainActor (DeviceSession) -> Void,
+                          detach: @escaping @MainActor () -> Void) {
+        removeSessionClient(key)
+        let client = SessionClient(attach: attach, detach: detach)
+        sessionClients[key] = client
+        if let startedSession { client.attach(startedSession) }
+    }
+
+    func removeSessionClient(_ key: String) {
+        guard let client = sessionClients.removeValue(forKey: key) else { return }
+        if startedSession != nil { client.detach() }
+    }
+
     // MARK: - Configure + registration
 
     private func ensureConfigured() -> Bool {
@@ -294,6 +342,10 @@ final class MetaGlassesDisplay: GlassesDisplay {
                 switch state {
                 case .started:
                     self.setupDisplay(on: session)
+                    if self.startedSession == nil {
+                        self.startedSession = session
+                        self.sessionClients.values.forEach { $0.attach(session) }
+                    }
                 case .stopped:
                     self.connectionLost("Glasses session stopped")
                 default:
@@ -410,6 +462,10 @@ final class MetaGlassesDisplay: GlassesDisplay {
         sessionTasks.forEach { $0.cancel() }
         sessionTasks = []
         displayStateToken = nil   // dropping the token stops the listener
+        if startedSession != nil {
+            startedSession = nil
+            sessionClients.values.forEach { $0.detach() }
+        }
         if let display {
             self.display = nil
             display.stop()
@@ -457,12 +513,18 @@ final class MetaGlassesDisplay: GlassesDisplay {
             let revision = cueRevision
             let isFreshScreen = sentRevision == -1
             let cue = currentCue
+            let look = currentLook
             lastSendAt = .now
             do {
-                if let cue {
+                if let look {
+                    try await display.send(Self.lookLayout(for: look))
+                    if isFreshScreen { baseIsStandby = cue == nil }
+                } else if let cue {
                     try await display.send(Self.layout(for: cue))
-                } else if isFreshScreen {
+                    baseIsStandby = false
+                } else if isFreshScreen || baseIsStandby {
                     try await display.send(Self.standbyLayout())
+                    baseIsStandby = true
                 } else {
                     try await display.clearDisplay()
                 }
@@ -523,6 +585,91 @@ final class MetaGlassesDisplay: GlassesDisplay {
         .background(.card)
     }
 
+    /// Look card: green badge + "LOOK", item name, price range, the one-line summary, and a
+    /// gesture hint. Expanded (after a pinch) adds category, source count and the next actions.
+    static func lookLayout(for look: LookHighlight) -> FlexBox {
+        let name = look.price?.name ?? look.identification.name ?? "Item"
+        let price = look.price.map(lookPriceRange) ?? "Checking prices…"
+        let summary = look.price.flatMap { $0.summary.isEmpty ? nil : $0.summary }
+        let category = look.identification.category.flatMap { $0.isEmpty ? nil : $0 }
+        let sources = look.price.map { $0.sourceCount == 1 ? "1 source" : "\($0.sourceCount) sources" }
+        return FlexBox(direction: .column, spacing: look.expanded ? 10 : 8) {
+            FlexBox(direction: .row, spacing: 8, crossAlignment: .center) {
+                Image(image: lookBadge(), sizePreset: .icon)
+                Text(look.expanded ? "LOOK · DETAILS" : "LOOK", style: .meta, color: .secondary)
+            }
+            Text(name, style: .heading)
+            Text(price, style: .body)
+            if let summary {
+                Text(summary, style: .body, color: .secondary)
+            }
+            if look.expanded {
+                FlexBox(direction: .row, spacing: 16) {
+                    if let category {
+                        Text(category, style: .meta, color: .secondary)
+                    }
+                    if let sources {
+                        Text(sources, style: .meta, color: .secondary)
+                    }
+                }
+                Text("Swipe for sources · hold capture to negotiate", style: .meta, color: .secondary)
+            } else {
+                Text("Pinch for details · swipe back to dismiss", style: .meta, color: .secondary)
+            }
+        }
+        .padding(20)
+        .background(.card)
+    }
+
+    /// "$22 – $35", "$35", or "No prices found" (cents in, whole dollars out when even).
+    static func lookPriceRange(_ price: LookPrice) -> String {
+        switch (price.priceLow, price.priceHigh) {
+        case let (low?, high?) where low != high: "\(Money.format(low)) – \(Money.format(high))"
+        case let (low?, _): Money.format(low)
+        case let (nil, high?): Money.format(high)
+        case (nil, nil): "No prices found"
+        }
+    }
+
+    /// Same glasses card? (Ignores `box`, which moves every frame.)
+    private static func sameLookCard(_ a: LookHighlight?, _ b: LookHighlight?) -> Bool {
+        guard let a, let b else { return a == nil && b == nil }
+        return a.id == b.id && a.identification == b.identification && a.price == b.price && a.expanded == b.expanded
+    }
+
+    private static var lookBadgeImage: UIImage?
+
+    /// Green viewfinder corners: the glasses-side echo of the phone's green highlight box.
+    static func lookBadge() -> UIImage {
+        if let lookBadgeImage { return lookBadgeImage }
+        let size = CGSize(width: 32, height: 32)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: 3, dy: 3)
+            let arm: CGFloat = 9
+            let path = UIBezierPath()
+            for (corner, dx, dy) in [(CGPoint(x: rect.minX, y: rect.minY), arm, arm),
+                                     (CGPoint(x: rect.maxX, y: rect.minY), -arm, arm),
+                                     (CGPoint(x: rect.minX, y: rect.maxY), arm, -arm),
+                                     (CGPoint(x: rect.maxX, y: rect.maxY), -arm, -arm)] {
+                path.move(to: CGPoint(x: corner.x + dx, y: corner.y))
+                path.addLine(to: corner)
+                path.addLine(to: CGPoint(x: corner.x, y: corner.y + dy))
+            }
+            path.lineWidth = 4
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            UIColor(red: 0.25, green: 1.0, blue: 0.45, alpha: 1).setStroke()
+            path.stroke()
+            UIColor(red: 0.25, green: 1.0, blue: 0.45, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 12, y: 12, width: 8, height: 8)).fill()
+        }
+        lookBadgeImage = image
+        return image
+    }
+
     private static var dotCache: [StatusColor: UIImage] = [:]
 
     static func statusDot(_ status: StatusColor) -> UIImage {
@@ -560,6 +707,9 @@ final class MetaGlassesDisplay: GlassesDisplay {
             let device = try kit.pairGlasses(model: .metaRayBanDisplay)
             device.powerOn()
             device.don()
+            // Look mode: the mock glasses camera streams the phone's back camera (a real
+            // device); in the Simulator call `setMockCameraFeed(_:)` with a video file.
+            device.services.camera.setCameraFeed(cameraFacing: .back)
             mockDevice = device
             mockPreview = device.services.display
             isMock = true
@@ -573,6 +723,24 @@ final class MetaGlassesDisplay: GlassesDisplay {
         } catch {
             await kit.disable()
             fail("Mock glasses failed: \(error.description)")
+        }
+    }
+
+    /// Feed the mock glasses camera from a video file (Simulator: there is no phone camera).
+    func setMockCameraFeed(_ fileURL: URL) {
+        mockDevice?.services.camera.setCameraFeed(fileURL: fileURL)
+    }
+
+    /// Inject a glasses gesture through MockInputKit, so it arrives via `GlassesInputs`
+    /// exactly as a Neural Band / captouch / capture-button event would.
+    func sendMockGesture(_ gesture: LookGesture) {
+        guard let input = mockDevice?.services.input else { return }
+        switch gesture {
+        case .select: input.select(source: .neuralBand)
+        case .dismiss: input.back(source: .neuralBand)
+        case .next: input.navRight(source: .neuralBand)
+        case .previous: input.navLeft(source: .neuralBand)
+        case .negotiate: input.capture(pressType: .hold)
         }
     }
 
