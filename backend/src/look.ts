@@ -134,6 +134,7 @@ export const IDENTIFY_SYSTEM = [
   ``,
   `name: as specific as you can honestly tell from the photo (artist and title, brand and model, edition, format), e.g.`,
   `"The Weeknd – Starboy (2×LP vinyl)", "Nike Air Jordan 1 Retro High OG 'Chicago'", "Sony WH-1000XM5 headphones (black)".`,
+  `For media (records, CDs, games), include the physical format you can see or infer, e.g. "(vinyl LP)", "(CD)".`,
   `Never a bare generic name like "vinyl record" or "sneakers": if you cannot tell more than that, set is_product false.`,
   `category: one lowercase word or two, e.g. "vinyl", "sneakers", "bike", "electronics", "collectible", "clothing", "instrument".`,
   `confidence: 0 to 1, how sure you are of the name (not just that it is a product).`,

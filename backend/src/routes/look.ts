@@ -16,8 +16,8 @@ const Price = z.object({
 });
 
 export function lookRoutes(app: FastifyInstance, deal: Deal) {
-  // {is_product, name, category, confidence}. Real mode: one CUE_MODEL vision call (~1-3 s); 502 {error} on failure.
+  // {is_product, name, category, confidence}. Real mode: one CUE_MODEL vision call (~1-2 s); 502 {error} on failure.
   app.post("/look/identify", async (req) => deal.lookIdentify(parseBody(Identify, req.body)));
-  // {name, price_low, price_high, summary, source_count} (cents). Real mode: CUE_MODEL + <= 2 web searches, cached 30 min per name.
+  // {name, price_low, price_high, summary, source_count} (cents). Real mode: CUE_MODEL + <= 2 web searches (~4-5 s), cached 30 min per name.
   app.post("/look/price", async (req) => deal.lookPrice(parseBody(Price, req.body)));
 }
