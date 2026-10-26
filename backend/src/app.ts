@@ -5,11 +5,13 @@ import { createAi, type Ai } from "./ai/index.js";
 import type { Config } from "./config.js";
 import { listScriptIds } from "./content.js";
 import { Deal, HttpError } from "./deal.js";
+import { LookRunner } from "./look.js";
 import { createPayments, type Payments } from "./payments/index.js";
 import { ResearchRunner } from "./research.js";
 import { agreementRoutes } from "./routes/agreements.js";
 import { eventRoutes } from "./routes/events.js";
 import { listingRoutes } from "./routes/listings.js";
+import { lookRoutes } from "./routes/look.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { researchRoutes } from "./routes/research.js";
 import { sessionRoutes } from "./routes/sessions.js";
@@ -22,6 +24,7 @@ export interface AppDeps {
   ai?: Ai;
   payments?: Payments;
   research?: ResearchRunner;
+  look?: LookRunner;
   logger?: boolean;
 }
 
@@ -34,14 +37,16 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     (cfg.supabaseUrl && cfg.supabaseServiceRoleKey ? new SupabaseStore(cfg.supabaseUrl, cfg.supabaseServiceRoleKey) : new MemoryStore());
   const ai = deps.ai ?? createAi(cfg, app.log);
   const payments = deps.payments ?? createPayments(cfg.stripeSecretKey);
+  const client = ai.kind === "claude" ? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 }) : null;
   const research = deps.research ?? new ResearchRunner({
     mockMode: ai.kind !== "claude",
-    client: ai.kind === "claude" ? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 }) : null,
+    client,
     model: cfg.researchModel,
     cueModel: cfg.cueModel,
     log: app.log,
   });
-  const deal = new Deal(store, ai, payments, cfg, research);
+  const look = deps.look ?? new LookRunner({ mockMode: ai.kind !== "claude", client, model: cfg.cueModel, log: app.log });
+  const deal = new Deal(store, ai, payments, cfg, research, look);
 
   app.setErrorHandler((err: unknown, _req, reply) => {
     if (err instanceof HttpError) {
@@ -70,6 +75,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
   paymentRoutes(app, deal);
   listingRoutes(app, deal);
   researchRoutes(app, deal);
+  lookRoutes(app, deal);
 
   app.addHook("onClose", async () => deal.stopAll());
   return { app, deal };

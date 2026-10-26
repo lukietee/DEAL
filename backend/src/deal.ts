@@ -10,6 +10,7 @@ import {
   ConditionCheckError, LISTING_UNREADABLE, ListingUnreadableError,
   type ConditionCheck, type ConditionInput, type Discrepancy, type Listing, type ListingInput,
 } from "./listing.js";
+import { LookError, LookRunner, type IdentifyInput, type LookIdentification, type LookPrice, type PriceInput } from "./look.js";
 import { formatCentsShort } from "./money.js";
 import type { Payments } from "./payments/index.js";
 import { ResearchRunner, type PreviewInput, type ResearchPreview } from "./research.js";
@@ -79,6 +80,7 @@ export class Deal {
     public payments: Payments,
     private cfg: Pick<Config, "merchantName" | "displayTimeZone">,
     public research: ResearchRunner = new ResearchRunner({ mockMode: true, client: null, model: "", cueModel: "", log: { warn: () => undefined } }),
+    public look: LookRunner = new LookRunner({ mockMode: true, client: null, model: "", log: { warn: () => undefined } }),
   ) {}
 
   /** Serialise mutations per key (session id) so seq numbers and terms never race. */
@@ -367,6 +369,28 @@ export class Deal {
     return this.research.preview(input);
   }
 
+  // ---------- look mode (glasses) ----------
+
+  /** POST /look/identify: what is the item in this crop, and is it worth pricing? */
+  async lookIdentify(input: IdentifyInput): Promise<LookIdentification> {
+    try {
+      return await this.look.identify(input);
+    } catch (err) {
+      if (err instanceof LookError) throw new HttpError(502, err.message);
+      throw err;
+    }
+  }
+
+  /** POST /look/price: a quick market range for the price window (cached per name). */
+  async lookPrice(input: PriceInput): Promise<LookPrice> {
+    try {
+      return await this.look.price(input);
+    } catch (err) {
+      if (err instanceof LookError) throw new HttpError(502, err.message);
+      throw err;
+    }
+  }
+
   /**
    * POST /sessions/:id/condition-check: compare what the buyer sees against session.listing.condition_claims.
    * The result is inserted as an event (kind "condition_check", speaker "buyer") carrying the cue, so it flows to
@@ -457,6 +481,7 @@ export class Deal {
     this.timers.clear();
     this.scriptTimers.clear();
     this.research.stopAll();
+    this.look.stopAll();
   }
 
   async correctTerm(sessionId: string, termId: string, correction: TermCorrection): Promise<Term[]> {
