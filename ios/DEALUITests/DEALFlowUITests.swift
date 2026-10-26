@@ -20,6 +20,8 @@ final class DEALFlowUITests: XCTestCase {
         app.launchArguments += ["-DEALDemoShortcuts"]
         // The Simulator has no usable mic: keep "Start listening" from asking for speech / mic permission.
         app.launchArguments += ["-DEALNoAutoMic"]
+        // Look mode reads the drawn Starboy demo feed instead of a camera.
+        app.launchArguments += ["-DEALLookDemo"]
         // Optional: point the app at another backend (e.g. a mock on :3300) without changing the default.
         if let url = ProcessInfo.processInfo.environment["DEAL_APP_BACKEND_URL"], !url.isEmpty {
             app.launchArguments += ["-deal.backendURL", url]
@@ -223,6 +225,54 @@ final class DEALFlowUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["dealTranscript"].waitForExistence(timeout: 15), "Deal Detail never showed the transcript")
         sleep(1)
         shot("L-B7-detail")
+    }
+
+    // MARK: Look mode
+
+    /// B1 -> Look (off by default, nothing highlighted) -> Turn on Look -> the demo feed pans onto
+    /// the Starboy vinyl, the dwell completes, mock `/look/identify` + `/look/price` answer ->
+    /// green highlight with "$25 – $35" -> Pinch (select) expands it -> Dismiss hides it and it
+    /// stays hidden while the record is still in view.
+    func testLookFlow() throws {
+        button(startingWith: "I'm Buying").tapWhenReady()
+        app.buttons["openLook"].tapWhenReady()
+        let toggle = app.buttons["lookToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "Look never opened")
+        XCTAssertEqual(toggle.value as? String, "Off", "Look should be off by default")
+        let window = app.descendants(matching: .any)["lookWindow"]
+        XCTAssertFalse(window.exists)
+        sleep(1)
+        shot("K-look-off")
+
+        app.buttons["lookTurnOn"].tapWhenReady()
+        XCTAssertTrue(window.waitForExistence(timeout: 25), "the highlight window never appeared")
+        let range = app.staticTexts["lookPriceRange"]
+        XCTAssertTrue(range.waitForExistence(timeout: 15), "the price never loaded")
+        XCTAssertEqual(range.label, "$25 – $35")
+        XCTAssertTrue(app.staticTexts["lookItemName"].label.localizedCaseInsensitiveContains("Starboy"))
+        XCTAssertTrue(app.descendants(matching: .any)["lookHighlight"].exists, "no green highlight")
+        sleep(2)
+        shot("K-look-highlight")
+
+        app.buttons["lookGesture-select"].tapWhenReady()
+        let expanded = app.descendants(matching: .any)["lookExpanded"]
+        XCTAssertTrue(expanded.waitForExistence(timeout: 5), "select never expanded the window")
+        XCTAssertTrue(app.staticTexts["$25"].exists && app.staticTexts["$35"].exists, "expanded low / high missing")
+        XCTAssertTrue(app.staticTexts["4"].exists, "expanded source count missing")
+        sleep(2)
+        shot("K-look-expanded")
+
+        app.buttons["lookGesture-next"].tapWhenReady()
+        app.buttons["lookGesture-next"].tapWhenReady()
+        XCTAssertTrue(app.buttons["lookNegotiateButton"].waitForExistence(timeout: 5), "next never reached the Negotiate page")
+        shot("K-look-negotiate-page")
+
+        // Dismiss: gone, and not re-highlighted while the record is still in front of the camera.
+        app.buttons["lookGesture-dismiss"].tapWhenReady()
+        XCTAssertTrue(window.waitForNonExistence(timeout: 5), "dismiss didn't hide the window")
+        sleep(6)
+        XCTAssertFalse(app.descendants(matching: .any)["lookWindow"].exists, "a dismissed item came back")
+        shot("K-look-dismissed")
     }
 
     // MARK: Marketplace meetup: buyer phone (UI) + seller via API

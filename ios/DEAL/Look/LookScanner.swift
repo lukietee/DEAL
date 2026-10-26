@@ -84,8 +84,6 @@ final class LookScanner {
     /// with `nil` when the highlight goes away. Not called for box moves.
     var onGlassesUpdate: ((LookHighlight?) -> Void)?
 
-    var sourceName: String { frames.name }
-
     // Dwell and gating state
     private var analyzing = false
     private var dwellBox: CGRect?
@@ -239,18 +237,17 @@ final class LookScanner {
         }
     }
 
-    /// The candidate closest to where the head points, if one is a plausible object.
+    /// The object the head points at: of the plausible boxes near the frame center, the largest
+    /// (a sleeve rather than the face printed on it).
     static func pickCandidate(_ boxes: [CGRect]) -> CGRect? {
-        let center = CGPoint(x: 0.5, y: 0.5)
         let ok = boxes.filter { box in
             let area = box.width * box.height
             let m = LookTuning.edgeMargin
-            let c = box.center
             return area >= LookTuning.minBoxArea && area <= LookTuning.maxBoxArea
                 && box.minX > m && box.minY > m && box.maxX < 1 - m && box.maxY < 1 - m
-                && hypot(c.x - center.x, c.y - center.y) <= LookTuning.centerRadius
+                && hypot(box.midX - 0.5, box.midY - 0.5) <= LookTuning.centerRadius
         }
-        return ok.min { hypot($0.midX - 0.5, $0.midY - 0.5) < hypot($1.midX - 0.5, $1.midY - 0.5) }
+        return ok.max { $0.width * $0.height < $1.width * $1.height }
     }
 
     /// Mostly inside the frame and not degenerate.

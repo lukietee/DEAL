@@ -41,6 +41,7 @@ final class LookVision: @unchecked Sendable {
     /// salient object with the best overlap instead.
     private var trackerBroken = false
     private var lastTracked: CGRect?
+    private var saliencyBroken = false
 
     // MARK: Per frame
 
@@ -93,16 +94,34 @@ final class LookVision: @unchecked Sendable {
                         preview: preview, size: size)
     }
 
+    /// Objectness saliency first. Where it can't run (the Simulator has no Neural Engine) or sees
+    /// nothing, rectangle detection stands in: sleeves, boxes and books are mostly rectangles.
     private func saliency(_ buffer: CVPixelBuffer) -> [CGRect] {
-        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, options: [:])
+        if !saliencyBroken {
+            let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+            do {
+                try handler.perform([request])
+                let objects = (request.results?.first)?.salientObjects ?? []
+                if !objects.isEmpty {
+                    return objects.map { Self.flip($0.boundingBox) }
+                }
+            } catch {
+                saliencyBroken = true
+            }
+        }
+        let rects = VNDetectRectanglesRequest()
+        rects.minimumSize = 0.15
+        rects.maximumObservations = 4
+        rects.minimumAspectRatio = 0.3
+        rects.quadratureTolerance = 25
+        rects.minimumConfidence = 0.5
         do {
-            try handler.perform([request])
+            try handler.perform([rects])
         } catch {
             return []
         }
-        let objects = (request.results?.first)?.salientObjects ?? []
-        return objects.map { Self.flip($0.boundingBox) }
+        return (rects.results ?? []).map { Self.flip($0.boundingBox) }
     }
 
     // MARK: Tracking

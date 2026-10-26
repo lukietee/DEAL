@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// Look mode (from B1): the live view of the glasses camera (or the iPhone camera / demo feed),
@@ -9,6 +10,8 @@ struct LookView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var scanner: LookScanner?
+    /// The on-screen gesture buttons inject through this, the same path as the Neural Band.
+    @State private var pad = PhoneGestureSource()
     @State private var startingNegotiation = false
     @State private var negotiateError: String?
 
@@ -31,7 +34,7 @@ struct LookView: View {
                             .background(Capsule().fill(Palette.red))
                             .padding(.bottom, 8)
                     }
-                    LookGesturePad(scanner: scanner, busy: startingNegotiation)
+                    LookGesturePad(scanner: scanner, pad: pad, busy: startingNegotiation)
                 }
                 .padding(.horizontal, 16)
             }
@@ -40,18 +43,16 @@ struct LookView: View {
         .buyerHiddenNavBar()
         .task {
             guard scanner == nil else { return }
-            let s = LookScanner(frames: LookSources.frames(model: model), gestures: LookSources.gestures(model: model), api: model.api)
+            let s = LookScanner(frames: LookSources.frames(model: model), gestures: LookSources.gestures(model: model, pad: pad), api: model.api)
             s.onNegotiate = { highlight in Task { await negotiate(highlight) } }
-            s.onGlassesUpdate = { highlight in
-                // LOOK-INTEGRATION: the glasses card. Wire to `model.metaGlasses.showLook(highlight)`
-                // once MetaGlassesDisplay has it (glasses I/O agent).
-                _ = highlight
-            }
+            // The glasses get a compact card (they can't draw on the real object).
+            s.onGlassesUpdate = { [glasses = model.metaGlasses] highlight in glasses.showLook(highlight) }
             scanner = s
             Platform.setIdleTimerDisabled(true)
         }
         .onDisappear {
             scanner?.stop()
+            model.metaGlasses.showLook(nil)
             Platform.setIdleTimerDisabled(false)
         }
     }
@@ -132,21 +133,43 @@ struct LookView: View {
     }
 }
 
-/// Where Look gets frames and gestures.
+/// Where Look gets frames and gestures: the glasses when they're connected, else the iPhone's
+/// back camera. The demo feed runs with `-DEALLookDemo`, or with Demo shortcuts on a device
+/// without a camera (the Simulator).
 @MainActor
 enum LookSources {
     static func frames(model: AppModel) -> LookFrameSource {
         if ProcessInfo.processInfo.arguments.contains(LookDemoFrameSource.launchArgument) {
             return LookDemoFrameSource()
         }
-        // LOOK-INTEGRATION: GlassesCamera when glasses are connected, else PhoneCameraSource
-        // (glasses I/O agent). Until then the demo feed stands in.
-        return LookDemoFrameSource()
+        if model.metaGlasses.wantsConnection {
+            return GlassesCamera(glasses: model.metaGlasses)
+        }
+        if AVCaptureDevice.default(for: .video) == nil, model.settings.demoShortcuts {
+            return LookDemoFrameSource()
+        }
+        return PhoneCameraSource()
     }
 
-    static func gestures(model: AppModel) -> LookGestureSource? {
-        // LOOK-INTEGRATION: GlassesInputs (Neural Band). The on-screen pad works without it.
-        nil
+    /// The on-screen pad, plus the Neural Band when glasses are connected, as one source.
+    static func gestures(model: AppModel, pad: PhoneGestureSource) -> LookGestureSource {
+        model.metaGlasses.wantsConnection
+            ? MergedGestureSource([GlassesInputs(glasses: model.metaGlasses), pad])
+            : MergedGestureSource([pad])
+    }
+
+    /// True when the glasses' gestures (not just the on-screen pad) are live.
+    static func glassesGesturesActive(_ source: LookGestureSource?) -> Bool {
+        (source as? MergedGestureSource)?.sources.contains { $0 is GlassesInputs && $0.isActive } ?? false
+    }
+
+    /// Short name for the status pill.
+    static func label(_ source: LookFrameSource) -> String {
+        switch source {
+        case is GlassesCamera: "Glasses"
+        case is PhoneCameraSource: "iPhone camera"
+        default: source.name
+        }
     }
 }
 
@@ -321,7 +344,7 @@ private struct LookPriceWindow: View {
 
         card
             .frame(width: width)
-            .background(GeometryReader { g in Color.clear.preference(key: SizeKey.self, value: g.size) })
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { measured = $0 }
             .overlay(alignment: above ? .bottomLeading : .topLeading) {
                 if above || below {
                     Pointer()
@@ -337,7 +360,6 @@ private struct LookPriceWindow: View {
             .animation(.linear(duration: 0.12), value: x)
             .animation(.linear(duration: 0.12), value: y)
             .animation(.spring(response: 0.38, dampingFraction: 0.82), value: highlight.expanded)
-            .onPreferenceChange(SizeKey.self) { measured = $0 }
             .onTapGesture { scanner.handle(.select) }
             .environment(\.colorScheme, .light)
     }
@@ -416,11 +438,6 @@ private struct LookPriceWindow: View {
         .padding(.top, 2)
     }
 
-    private struct SizeKey: PreferenceKey {
-        static let defaultValue = CGSize(width: 250, height: 140)
-        static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
-    }
-
     /// The little triangle that points at the item.
     private struct Pointer: Shape {
         func path(in rect: CGRect) -> Path {
@@ -470,6 +487,7 @@ private struct LookExpandedDetail: View {
                 hint("hand.pinch.fill", "Pinch to close")
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("lookExpanded")
     }
 
@@ -481,16 +499,10 @@ private struct LookExpandedDetail: View {
             stat(price?.priceHigh.map { Money.format($0) } ?? "—", "High")
             stat(price.map { "\($0.sourceCount)" } ?? "—", price?.sourceCount == 1 ? "Source" : "Sources")
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("lookExpandedStats")
         if let low = price?.priceLow, let high = price?.priceHigh, high > low {
             LookRangeBar(low: low, high: high)
-        }
-        if let summary = scanner.research?.summary, !summary.isEmpty {
-            Text(summary)
-                .font(DealFont.jakarta(12))
-                .foregroundStyle(Palette.muted)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -609,7 +621,7 @@ private struct LookStatusPill: View {
     var body: some View {
         HStack(spacing: 8) {
             indicator
-            Text(scanner.sourceName)
+            Text(LookSources.label(scanner.frames))
                 .font(DealFont.jakarta(13, .bold))
             Text("·").foregroundStyle(.white.opacity(0.5))
             Text(scanner.notice ?? scanner.status.label)
@@ -682,6 +694,7 @@ private struct LookToggle: View {
 /// The glasses gestures as buttons, for when no glasses are attached (and the demo).
 private struct LookGesturePad: View {
     var scanner: LookScanner
+    var pad: PhoneGestureSource
     var busy: Bool
 
     private var active: Bool { scanner.highlight != nil && !busy }
@@ -710,7 +723,7 @@ private struct LookGesturePad: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(.ultraThinMaterial))
-            Text(scanner.gestures?.isActive == true ? "Neural Band connected · buttons mirror your gestures"
+            Text(LookSources.glassesGesturesActive(scanner.gestures) ? "Neural Band connected · buttons mirror your gestures"
                  : "No glasses? These send the same gestures.")
                 .font(DealFont.jakarta(11, .medium))
                 .foregroundStyle(.white.opacity(0.6))
@@ -719,7 +732,7 @@ private struct LookGesturePad: View {
     }
 
     private func pad(_ symbol: String, _ label: String, _ gesture: LookGesture, primary: Bool = false) -> some View {
-        Button { scanner.handle(gesture) } label: {
+        Button { pad.send(gesture) } label: {
             VStack(spacing: 5) {
                 Image(systemName: symbol)
                     .font(.system(size: primary ? 20 : 16, weight: .bold))

@@ -20,7 +20,7 @@ final class LookDemoFrameSource: LookFrameSource {
     /// Whether the feed is currently pointed away from the record.
     private(set) var lookingAway = false
 
-    private let frameSize = CGSize(width: 720, height: 960)
+    private let frameSize = CGSize(width: 720, height: 1280)
     private var scene: CGImage?
     private var timer: Timer?
     private var startedAt: TimeInterval = 0
@@ -77,38 +77,28 @@ final class LookDemoFrameSource: LookFrameSource {
         // A slow, small sway: a real head is never perfectly still.
         let sway = CGFloat(sin((now - startedAt) * 1.3)) * 2.5
         let bob = CGFloat(cos((now - startedAt) * 0.9)) * 1.5
-        guard let buffer = render(scene, x: currentOffset(now) + sway, y: 170 + bob) else { return }
+        guard let buffer = render(scene, x: currentOffset(now) + sway, y: 140 + bob) else { return }
         onFrame(LookFrame(pixelBuffer: buffer, timestamp: now))
     }
 
     /// One frame: the `frameSize` window of the scene at (x, y), top-left origin.
     private func render(_ scene: CGImage, x: CGFloat, y: CGFloat) -> CVPixelBuffer? {
-        let w = Int(frameSize.width), h = Int(frameSize.height)
-        var buffer: CVPixelBuffer?
-        let attrs: [CFString: Any] = [kCVPixelBufferCGImageCompatibilityKey: true,
-                                      kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-                                      kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary]
-        guard CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &buffer) == kCVReturnSuccess,
-              let buffer else { return nil }
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let ctx = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: w, height: h, bitsPerComponent: 8,
-                                  bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return nil }
-        // CGContext is bottom-left; draw the scene so its (x, y) top-left lands at the frame's top-left.
-        let sh = CGFloat(scene.height)
-        ctx.draw(scene, in: CGRect(x: -x, y: -(sh - y - CGFloat(h)), width: CGFloat(scene.width), height: sh))
-        return buffer
+        #if canImport(UIKit)
+        let rect = CGRect(x: x.rounded(), y: y.rounded(), width: frameSize.width, height: frameSize.height)
+        guard let window = scene.cropping(to: rect) else { return nil }
+        return PixelBuffers.make(from: UIImage(cgImage: window))
+        #else
+        return nil
+        #endif
     }
 
     // MARK: Scene
 
-    /// 1480×1300: warm wall and a wooden shelf on the left (nothing worth pricing), the record
+    /// 1600×1700: warm wall and a wooden shelf on the left (nothing worth pricing), the record
     /// leaning on the shelf further right.
     private static func drawScene() -> CGImage? {
         #if canImport(UIKit)
-        let size = CGSize(width: 1480, height: 1300)
+        let size = CGSize(width: 1600, height: 1700)
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
         let image = UIGraphicsImageRenderer(size: size, format: format).image { r in
@@ -121,12 +111,12 @@ final class LookDemoFrameSource: LookFrameSource {
             ctx.drawLinearGradient(wall, start: .zero, end: CGPoint(x: 0, y: size.height), options: [])
             // Shelf top and front edge.
             UIColor(red: 0.45, green: 0.31, blue: 0.20, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 0, y: 930, width: size.width, height: 34))
+            ctx.fill(CGRect(x: 0, y: 1000, width: size.width, height: 34))
             UIColor(red: 0.34, green: 0.23, blue: 0.15, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 0, y: 964, width: size.width, height: 336))
+            ctx.fill(CGRect(x: 0, y: 1034, width: size.width, height: 666))
 
             // The record: a black disc peeking out of the sleeve.
-            let sleeve = CGRect(x: 640, y: 450, width: 440, height: 440)
+            let sleeve = CGRect(x: 640, y: 560, width: 440, height: 440)
             UIColor(white: 0.05, alpha: 1).setFill()
             ctx.fillEllipse(in: CGRect(x: sleeve.maxX - 300, y: sleeve.minY + 20, width: 400, height: 400))
             UIColor(white: 0.16, alpha: 1).setStroke()
@@ -182,7 +172,7 @@ final class LookDemoFrameSource: LookFrameSource {
             // A plain mug on the left of the shelf: a small, low-contrast object the dwell ignores
             // while the view passes over it.
             UIColor(red: 0.86, green: 0.84, blue: 0.80, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 170, y: 850, width: 70, height: 80))
+            ctx.fill(CGRect(x: 170, y: 920, width: 70, height: 80))
         }
         return image.cgImage
         #else
