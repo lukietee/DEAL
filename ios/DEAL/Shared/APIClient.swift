@@ -26,6 +26,8 @@ struct APIClient: Sendable {
     static let uploadTimeout: TimeInterval = 45
     /// `POST /research/preview` blocks while it searches the web (~15–25 s).
     static let researchTimeout: TimeInterval = 60
+    /// Look mode: `/look/identify` (vision on a small crop) and `/look/price` (cached per name).
+    static let lookTimeout: TimeInterval = 20
 
     static let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -144,6 +146,19 @@ struct APIClient: Sendable {
                        body: ResearchPreviewBody(item: item, category: category.rawValue, askingPrice: askingPrice))
     }
 
+    /// Look mode: is this crop a product worth pricing, and what is it? `imageJPEG` is the raw
+    /// JPEG crop of the dwelled-on box (≤ 768 px); it goes up as `image_base64`.
+    func identifyLook(imageJPEG: Data, hint: String? = nil) async throws -> LookIdentification {
+        try await send("POST", "/look/identify",
+                       body: LookIdentifyBody(imageBase64: imageJPEG.base64EncodedString(), hint: hint),
+                       unwrap: "identification")
+    }
+
+    /// Look mode: the quick market price for an identified item (not the full research run).
+    func lookPrice(name: String, category: String?) async throws -> LookPrice {
+        try await send("POST", "/look/price", body: LookPriceBody(name: name, category: category), unwrap: "price")
+    }
+
     func comparables(category: DealCategory) async throws -> [Comparable] {
         let (data, _) = try await raw("GET", "/comparables/\(category.rawValue)", body: Optional<Empty>.none, expectSuccess: true)
         return try Self.decodeComparables(data)
@@ -205,7 +220,9 @@ struct APIClient: Sendable {
         }
         // Uploads, and `/end` (the backend writes the summary with AI in real mode), can be slow.
         let isUpload = path == "/listings/parse" || path.hasSuffix("/condition-check") || path.hasSuffix("/end")
-        let timeout = path == "/research/preview" ? Self.researchTimeout : isUpload ? Self.uploadTimeout : Config.requestTimeout
+        let timeout = path == "/research/preview" ? Self.researchTimeout
+            : path.hasPrefix("/look/") ? Self.lookTimeout
+            : isUpload ? Self.uploadTimeout : Config.requestTimeout
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -245,6 +262,18 @@ struct APIClient: Sendable {
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? "No details" : String(text.prefix(200))
     }
+}
+
+/// `POST /look/identify` request: `{image_base64, hint?}`.
+struct LookIdentifyBody: Encodable, Sendable {
+    var imageBase64: String
+    var hint: String?
+}
+
+/// `POST /look/price` request: `{name, category?}`.
+struct LookPriceBody: Encodable, Sendable {
+    var name: String
+    var category: String?
 }
 
 extension String {

@@ -27,6 +27,7 @@ struct BuyerHomeView: View {
                     .padding(.top, -29)
                     .padding(.trailing, 24)
                 setUpButton
+                lookCard
                 if let startError {
                     Text(startError).font(DealFont.caption).foregroundStyle(Palette.red)
                 }
@@ -126,6 +127,49 @@ struct BuyerHomeView: View {
         .padding(.trailing, 24)
         .accessibilityLabel("Set up with a listing")
         .accessibilityIdentifier("startNegotiation")
+    }
+
+    /// Look mode: look at a product through the glasses (or the phone) and see its market price.
+    private var lookCard: some View {
+        Button { path.append(.look) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "eye.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Palette.ink)
+                    .frame(width: 48, height: 48)
+                    .background(Circle().fill(Palette.green))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Look").font(DealFont.cardTitle)
+                        Text("NEW")
+                            .font(DealFont.jakarta(10, .extrabold)).kerning(1.2)
+                            .foregroundStyle(Palette.greenText)
+                            .padding(.horizontal, 7).frame(height: 20)
+                            .background(Capsule().fill(Palette.green.opacity(0.18)))
+                    }
+                    Text("Look at a product to see what it sells for.")
+                        .font(DealFont.caption)
+                        .foregroundStyle(Palette.muted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Open")
+                    .font(DealFont.button)
+                    .padding(.horizontal, 18)
+                    .frame(height: 44)
+                    .background(Capsule().fill(Palette.sand))
+            }
+            .padding(.vertical, 16)
+            .padding(.leading, 16)
+            .padding(.trailing, 16)
+            .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(Palette.surface))
+            .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Look")
+        .accessibilityIdentifier("openLook")
     }
 
     /// `POST /sessions {auto: true}` -> B3. The live session view starts the mic.

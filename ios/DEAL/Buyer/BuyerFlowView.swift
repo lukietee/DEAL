@@ -8,6 +8,8 @@ enum BuyerRoute: Hashable {
     case history
     /// B7 Deal Detail
     case deal(Session)
+    /// Look mode: live camera, green highlight + market price
+    case look
 }
 
 /// Buyer mode container. B1 Home is the root (B2 and B7 push on top of it). While a session is
@@ -41,6 +43,7 @@ struct BuyerFlowView: View {
                 case .newNegotiation: NewNegotiationView()
                 case .history: PurchaseHistoryView(onResume: resume)
                 case .deal(let session): DealDetailView(session: session)
+                case .look: LookView()
                 }
             }
         }
