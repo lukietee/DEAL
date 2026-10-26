@@ -33,6 +33,8 @@ export interface ResearchAgent {
   queries: string[];
   sources: ResearchSource[];
   summary: string | null;
+  /** ≤ ~24 chars for the glasses research strip, e.g. "$590–725 nearby", "Check tire wear". */
+  headline: string | null;
   price_low: number | null; // cents
   price_high: number | null; // cents
   started_at: string | null;
@@ -78,6 +80,7 @@ const AGENTS: AgentSpec[] = [
 
 const ResearchOutput = z.object({
   summary: z.string(),
+  headline: z.string().nullable().optional(),
   price_low: z.number().int().nullable().optional(),
   price_high: z.number().int().nullable().optional(),
   sources: z
@@ -91,7 +94,7 @@ const PhrasesOutput = z.object({
 
 function newAgent(a: AgentSpec): ResearchAgent {
   return {
-    id: a.id, title: a.title, status: "queued", activity: "Waiting to start", queries: [], sources: [], summary: null,
+    id: a.id, title: a.title, status: "queued", activity: "Waiting to start", queries: [], sources: [], summary: null, headline: null,
     price_low: null, price_high: null, started_at: null, finished_at: null, error: null,
   };
 }
@@ -187,7 +190,7 @@ export async function runClaudeAgent(client: Anthropic, model: string, spec: Age
     ctx.live ? `Use web search (at most 3 searches). Be quick; the buyer is mid-conversation.` : `Use web search (at most 3 searches). Be quick; the buyer is waiting on this screen.`,
     ``,
     `Finish with ONLY a JSON object, no prose around it:`,
-    `{"summary": "<= 2 short sentences a buyer can act on", "price_low": <integer cents or null>, "price_high": <integer cents or null>,`,
+    `{"summary": "<= 2 short sentences a buyer can act on", "headline": "<= 4 words for a heads-up display, e.g. \"$590-725 nearby\" or \"Check tire wear\"", "price_low": <integer cents or null>, "price_high": <integer cents or null>,`,
     ` "sources": [{"title": "...", "url": "<a page URL you actually found>", "price": <integer cents or null>, "note": "<= 8 words"}]}`,
     `List up to 5 sources, best first. Prices are integer cents (e.g. $520 = 52000).`,
   ].join("\n");
@@ -236,6 +239,7 @@ export async function runClaudeAgent(client: Anthropic, model: string, spec: Age
   agent.summary = out.summary;
   agent.price_low = out.price_low ?? null;
   agent.price_high = out.price_high ?? null;
+  agent.headline = agentHeadline(out.headline, agent);
 
   agent.activity = "Pulling images";
   await Promise.all(
@@ -244,6 +248,19 @@ export async function runClaudeAgent(client: Anthropic, model: string, spec: Age
   agent.status = "done";
   agent.activity = `${agent.queries.length} searches · ${agent.sources.length} sources`;
   agent.finished_at = now();
+}
+
+/** Glasses headline: the model's if short enough, else the price range, else the summary's opening words. */
+export function agentHeadline(raw: string | null | undefined, a: Pick<ResearchAgent, "summary" | "price_low" | "price_high">): string | null {
+  const max = 24;
+  const clean = raw?.trim().replace(/[.!]+$/, "");
+  if (clean && clean.length <= max) return clean;
+  if (a.price_low != null && a.price_high != null) return `${formatCents(a.price_low)}–${formatCents(a.price_high)}`;
+  const text = (clean || a.summary || "").trim();
+  if (!text) return null;
+  if (text.length <= max) return text.replace(/[.!]+$/, "");
+  const cut = text.slice(0, max - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ") > 8 ? cut.lastIndexOf(" ") : cut.length).replace(/[,;:]$/, "")}…`;
 }
 
 // ---------- pre-session market check (POST /research/preview) ----------
@@ -411,10 +428,12 @@ export class ResearchRunner {
         ? `${listings.length} similar listings run ${money(prices[0] ?? low)}–${money(prices[prices.length - 1] ?? high)} (illustrative).`
         : "No comparable listings in the demo data for this item.";
       agent.price_low = low; agent.price_high = high;
+      agent.headline = low != null && high != null ? `${money(low)}–${money(high)} nearby` : "No comps found";
     } else if (agent.id === "issues") {
       agent.summary = session.listing?.condition_claims.length
         ? `Verify the listing's claims in person: ${session.listing.condition_claims.slice(0, 3).join(", ")}. Worn tires and drivetrain are the usual hidden costs.`
         : "Check wear items in person; hidden repair costs are your best leverage.";
+      agent.headline = session.listing?.condition_claims.length ? "Verify listing claims" : "Check wear items";
     } else {
       const open = session.target_price ?? low;
       agent.summary = [
@@ -423,6 +442,7 @@ export class ResearchRunner {
         open != null ? `Open near ${formatCents(open)}.` : "",
       ].filter(Boolean).join(" ");
       agent.price_low = low; agent.price_high = high;
+      agent.headline = open != null ? `Open near ${formatCents(open)}` : agentHeadline(null, agent);
     }
     agent.status = "done";
     agent.activity = `${agent.queries.length} searches · ${Math.max(agent.sources.length, 3)} sources (demo data)`;

@@ -252,7 +252,7 @@ describe("null prices: cues and phrases never crash", () => {
     expect(withOffer.map((p) => p.text).join(" ")).not.toMatch(/null|NaN|undefined/);
     const research: ResearchState = {
       item: s.item, status: "done", started_at: "",
-      agents: [{ id: "comps", title: "Comparable listings", status: "done", activity: "", queries: [], sources: [], summary: "x", price_low: 15000, price_high: 20000, started_at: null, finished_at: null, error: null }],
+      agents: [{ id: "comps", title: "Comparable listings", status: "done", activity: "", queries: [], sources: [], summary: "x", headline: null, price_low: 15000, price_high: 20000, started_at: null, finished_at: null, error: null }],
     };
     const ranged = mockPhrases({ ...s, current_offer: 22000 }, null, research).map((p) => p.text).join(" ");
     expect(ranged).toContain("$150");

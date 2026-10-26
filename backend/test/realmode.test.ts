@@ -158,9 +158,9 @@ describe("cue research input", () => {
     const state: ResearchState = {
       item: "bike", status: "running", started_at: "",
       agents: [
-        { id: "comps", title: "Comparable listings", status: "done", activity: "", queries: [], summary: "Similar bikes $500-$600.", price_low: 50000, price_high: 60000, started_at: null, finished_at: null, error: null,
+        { id: "comps", title: "Comparable listings", status: "done", activity: "", queries: [], summary: "Similar bikes $500-$600.", headline: null, price_low: 50000, price_high: 60000, started_at: null, finished_at: null, error: null,
           sources: [{ title: "Trek on eBay", url: "https://ebay.com/x", price: 55000, note: null, image_url: null }] },
-        { id: "issues", title: "Known issues & wear", status: "searching", activity: "", queries: [], summary: null, price_low: null, price_high: null, started_at: null, finished_at: null, error: null, sources: [] },
+        { id: "issues", title: "Known issues & wear", status: "searching", activity: "", queries: [], summary: null, headline: null, price_low: null, price_high: null, started_at: null, finished_at: null, error: null, sources: [] },
       ],
     };
     expect(cueResearchFrom({ ...state, agents: [state.agents[1]!] })).toBeNull();
