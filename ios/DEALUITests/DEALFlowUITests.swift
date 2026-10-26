@@ -275,6 +275,41 @@ final class DEALFlowUITests: XCTestCase {
         shot("K-look-dismissed")
     }
 
+    /// Look away: the highlight fades and clears; looking back within a minute doesn't re-highlight
+    /// the same record (short-term memory).
+    func testLookFadesAndRemembers() throws {
+        button(startingWith: "I'm Buying").tapWhenReady()
+        app.buttons["openLook"].tapWhenReady()
+        app.buttons["lookTurnOn"].tapWhenReady()
+        let window = app.descendants(matching: .any)["lookWindow"]
+        XCTAssertTrue(window.waitForExistence(timeout: 30), "no highlight")
+        app.buttons["lookDemoPan"].tapWhenReady()   // Look away
+        XCTAssertTrue(window.waitForNonExistence(timeout: 8), "the highlight never cleared after looking away")
+        app.buttons["lookDemoPan"].tapWhenReady()   // Look back
+        sleep(8)
+        XCTAssertFalse(window.exists, "the same record was highlighted again right away")
+        shot("K-look-remembered")
+    }
+
+    /// Look -> highlight -> the Negotiate gesture starts a session for the item (B3 takes over).
+    func testLookNegotiate() throws {
+        button(startingWith: "I'm Buying").tapWhenReady()
+        app.buttons["openLook"].tapWhenReady()
+        app.buttons["lookTurnOn"].tapWhenReady()
+        XCTAssertTrue(app.staticTexts["lookPriceRange"].waitForExistence(timeout: 30), "no priced highlight")
+        let existing = Set(try sessionIDs())
+        app.buttons["lookGesture-negotiate"].tapWhenReady()
+        let item = app.staticTexts["sessionItem"]
+        XCTAssertTrue(item.waitForExistence(timeout: 15), "B3 never opened")
+        XCTAssertTrue(item.label.localizedCaseInsensitiveContains("Starboy"), "B3 item: \(item.label)")
+        let sid = try XCTUnwrap(try sessionIDs().first { !existing.contains($0) })
+        let session = try XCTUnwrap(try state(sid)["session"] as? [String: Any])
+        XCTAssertEqual(session["target_price"] as? Int, 2500)
+        XCTAssertEqual(session["max_budget"] as? Int, 3500)
+        sleep(1)
+        shot("K-look-negotiate-B3")
+    }
+
     // MARK: Marketplace meetup: buyer phone (UI) + seller via API
 
     /// Flagship demo: import the Facebook Marketplace bike ($650), negotiate with the

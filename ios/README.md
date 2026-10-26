@@ -40,6 +40,30 @@ Most of the time the buyer just walks up and starts talking. B1's big black **St
 - The dispute pack export appears only when there's an agreement.
 - B1 totals (Spent / Blocked / Purchases / Saved) still count paid sessions only.
 
+### Look mode (look at a product, see its price)
+B1's **Look** card opens a full-screen live view: the Meta glasses camera when glasses are connected, else the
+iPhone's back camera. Look is **off by default**; flip the **Look** switch (or **Turn on Look**).
+- **Gating, so it doesn't highlight everything:** a highlight needs all of
+  1. Look on;
+  2. a **1.2 s dwell** on one object near the frame center (the head direction stands in for gaze). Candidates come from
+     Vision objectness saliency (rectangle detection where saliency can't run, e.g. the Simulator). Boxes under 2% or over 70%
+     of the frame, touching the edge, or centered more than 0.28 from the middle don't count, and a head turn (mean luma change
+     > 0.06 on a 24×24 thumbnail) restarts the dwell;
+  3. not seen recently: a dHash of the crop plus its box, and the identified name, are remembered (not a product: 20 s,
+     shown: 60 s after it goes away, dismissed: 5 min);
+  4. `POST /look/identify` (a JPEG crop of the box, ≤ 768 px) says `is_product` with confidence ≥ 0.6. One identify in flight,
+     at most one every 2 s;
+  5. no other highlight showing.
+- Then the item gets a green highlight, tracked by `VNTrackObjectRequest`, with a window above it: name, price range, the
+  one-line summary ("Pinch for details"). `POST /look/price` fills it in (loading state meanwhile). It fades and clears 2 s
+  after the item leaves view.
+- **Gestures** (Neural Band through `GlassesInputs`, or the on-screen pad): Pinch (select) expands it (low / high / source
+  count, and kicks off `/research/preview` for the Sources page); Next / Back cycle Market price → Sources → Negotiate; Dismiss
+  hides it for 5 min; Negotiate (capture button hold) creates a session for the item with the range as target / max and opens B3.
+- The glasses get a compact card through `MetaGlassesDisplay.showLook(_:)` (they can't draw on the real object).
+- **Simulator / demo:** `-DEALLookDemo` (or Demo shortcuts on a device with no camera) feeds a drawn Starboy-style vinyl that
+  pans into view; **Look away / Look back** pans off and on. Mock mode identifies it as "The Weeknd – Starboy (2×LP vinyl)", $25 – $35.
+
 ### Two-phone demo: Facebook Marketplace meetup (flagship)
 Strangers haggling face to face over a used road bike listed at $650. DEAL coaches the buyer, catches
 condition claims that don't hold up, locks the agreed price, and the seller's phone is the terminal, so
@@ -90,6 +114,8 @@ ios/
 │   │                           Marketplace (Listing, Discrepancy, condition-check bodies, demo listing),
 │   │                           MarketplaceComponents (ListingCard, ClaimChips, DiscrepancyCard, VerifiedHandoffCard),
 │   │                           ImageEncoding (photo → downscaled base64 JPEG)
+│   ├── Look/                   LookContracts (shared types), LookScanner (gating + gestures), LookVision (saliency, tracker, crop),
+│   │                           LookView (live view + overlay), LookDemoFrameSource, GlassesCamera / PhoneCameraSource / GlassesInputs
 │   ├── Speech/                 SpeechTranscriber protocol + AppleSpeechTranscriber (SFSpeechRecognizer)
 │   └── Glasses/                GlassesDisplay protocol, PhoneTeleprompterDisplay, GlassesFanOut, TeleprompterView,
 │                               MetaGlassesDisplay (Meta Wearables SDK, no SwiftUI import), MetaGlassesUI (SwiftUI bits)
@@ -169,6 +195,7 @@ xcodebuild test -project DEAL.xcodeproj -scheme DEAL -destination 'platform=iOS 
 - `testMarketplaceSellerFlow`: (API: create a marketplace session with a listing, play `marketplace_bike`, draft, buyer confirms) → S1 → S3 Confirm → S4 $520.00 → Add line item (pre-filled "gas fee" $20) → waiting with $540.00 → (API: buyer rejects) → Tap to Pay → S5 "Payment verified · Hand over the item". Shots `M-S4-terminal`, `M-S4-gas-waiting`, `M-S5-verified`.
 - `testSellerFlow`: (API: create session) → S1 type code → (API: play script with 250 ms spacing, draft, buyer confirms) → S2 → S3 Confirm → S4 → Add line item → "Waiting for buyer approval" with $35,800.00 → (API: buyer rejects) → Tap to Pay → S5.
 - `testListeningFlow`: B1 → **Start listening** → B3 "Listening…" (research waiting) → types 4 lines with speaker Auto (Sony WH-1000XM5, $220, "Would you do 180?", "I can do 200") → backend detects the item and the $220 asking price → B3 shows the item → **End** → summary sheet (status `ended` with a `summary`) → Done → B1 Recent row → B7 row → Deal Detail transcript. Shots `L-B1-home`, `L-B3-listening`, `L-B3-typing`, `L-B3-detected`, `L-B3-summary`, `L-B1-recent`, `L-B7-history`, `L-B7-detail`. The suite launches with `-DEALNoAutoMic`, so Start listening never triggers the Simulator's permission prompts.
+- `testLookFlow`: B1 → Look (off by default) → Turn on Look → demo feed dwell → highlight with "$25 – $35" → Pinch expands (low / high / 4 sources) → Next ×2 → Negotiate page → Dismiss → stays hidden. `testLookFadesAndRemembers`: look away clears it, looking back doesn't re-highlight. `testLookNegotiate`: Negotiate gesture → B3 for the Starboy with target $25 / max $35. Shots `K-look-*`. The suite launches with `-DEALLookDemo`.
 - To use another backend (for example a mock on :3500): `TEST_RUNNER_DEAL_BACKEND_URL=http://127.0.0.1:3500 TEST_RUNNER_DEAL_APP_BACKEND_URL=http://localhost:3500 xcodebuild test ...`
 - Every step attaches a screenshot to the `.xcresult`. Export them with `xcrun xcresulttool export attachments --path <bundle>.xcresult --output-path <dir>`.
 - With Xcode 27.1, `xcodebuild test` sometimes keeps running after it prints `Test Suite 'All tests' passed`. When that happens, the results are already final and you can stop it.
