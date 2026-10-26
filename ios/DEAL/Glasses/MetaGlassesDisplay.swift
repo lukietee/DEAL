@@ -63,6 +63,8 @@ final class MetaGlassesDisplay: GlassesDisplay {
     private(set) var currentCue: GlassesCue?
     /// Look mode's highlighted item. While set, the glasses show the Look card instead of the cue.
     private(set) var currentLook: LookHighlight?
+    /// Research strip covering the cue (Look still wins over it).
+    private(set) var currentResearch: GlassesResearch?
     private(set) var deviceName: String?
     private(set) var lastError: String?
     private(set) var registrationDescription = "Not configured"
@@ -212,6 +214,13 @@ final class MetaGlassesDisplay: GlassesDisplay {
         let changed = !Self.sameLookCard(highlight, currentLook)
         currentLook = highlight
         guard changed else { return }
+        cueRevision += 1
+        scheduleSend()
+    }
+
+    func showResearch(_ research: GlassesResearch?) {
+        guard research != currentResearch else { return }
+        currentResearch = research
         cueRevision += 1
         scheduleSend()
     }
@@ -514,11 +523,15 @@ final class MetaGlassesDisplay: GlassesDisplay {
             let isFreshScreen = sentRevision == -1
             let cue = currentCue
             let look = currentLook
+            let research = currentResearch
             lastSendAt = .now
             do {
                 if let look {
                     try await display.send(Self.lookLayout(for: look))
                     if isFreshScreen { baseIsStandby = cue == nil }
+                } else if let research {
+                    try await display.send(Self.researchLayout(for: research))
+                    if isFreshScreen { baseIsStandby = cue == nil }   // like Look: standby comes back after
                 } else if let cue {
                     try await display.send(Self.layout(for: cue))
                     baseIsStandby = false
@@ -565,6 +578,27 @@ final class MetaGlassesDisplay: GlassesDisplay {
                 Text(offer, style: .body)
                 if let target {
                     Text(target, style: .body, color: .secondary)
+                }
+            }
+        }
+        .padding(20)
+        .background(.card)
+    }
+
+    /// "RESEARCH" + one row per agent: a dot (yellow working, green done, red failed), the agent
+    /// label and its headline. Rows fill in as each agent finishes.
+    static func researchLayout(for research: GlassesResearch) -> FlexBox {
+        FlexBox(direction: .column, spacing: 10) {
+            FlexBox(direction: .row, spacing: 8, crossAlignment: .center) {
+                Image(image: statusDot(research.isRunning ? .yellow : .green), sizePreset: .icon)
+                Text(research.isRunning ? "RESEARCH · \(research.doneCount)/\(research.rows.count)" : "RESEARCH",
+                     style: .meta, color: .secondary)
+            }
+            for row in research.rows {
+                FlexBox(direction: .row, spacing: 10, crossAlignment: .center) {
+                    Image(image: statusDot(row.phase == .done ? .green : row.phase == .failed ? .red : .yellow), sizePreset: .icon)
+                    Text(row.label, style: .body, color: .secondary)
+                    Text(row.text, style: .body, color: row.phase == .done ? .primary : .secondary)
                 }
             }
         }

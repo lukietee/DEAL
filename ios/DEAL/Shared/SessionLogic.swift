@@ -34,6 +34,47 @@ enum TerminalState: Equatable, Sendable {
     case approved(PaymentRequest)
 }
 
+/// The glasses research strip: one row per research agent (Comps / Issues / Price) with its
+/// progress, then its headline once it finishes. `SessionStore` decides when it covers the cue.
+struct GlassesResearch: Equatable, Sendable {
+    enum Phase: Equatable, Sendable { case working, done, failed }
+
+    struct Row: Equatable, Sendable {
+        let label: String
+        let phase: Phase
+        let text: String
+    }
+
+    let rows: [Row]
+    let isRunning: Bool
+
+    var doneCount: Int { rows.filter { $0.phase != .working }.count }
+
+    init?(_ research: ResearchState?) {
+        guard let research, !research.agents.isEmpty else { return nil }
+        rows = research.agents.map { agent in
+            let label = switch agent.id {
+            case "comps": "Comps"
+            case "issues": "Issues"
+            case "price": "Price"
+            default: agent.title
+            }
+            switch agent.status {
+            case "done":
+                let range = agent.priceLow.flatMap { low in agent.priceHigh.map { "\(Money.format(low))–\(Money.format($0))" } }
+                return Row(label: label, phase: .done, text: agent.headline ?? range ?? "Done")
+            case "error":
+                return Row(label: label, phase: .failed, text: "Unavailable")
+            case "reading":
+                return Row(label: label, phase: .working, text: "Reading…")
+            default:
+                return Row(label: label, phase: .working, text: "Searching…")
+            }
+        }
+        isRunning = research.isRunning
+    }
+}
+
 struct GlassesCue: Equatable, Sendable {
     var text: String
     var detail: String?

@@ -43,6 +43,8 @@ struct ResearchAgent: Codable, Sendable, Hashable, Identifiable {
     var queries: [String]
     var sources: [ResearchSource]
     var summary: String?
+    /// ≤ ~24 chars for the glasses research strip ("$590–725 nearby", "Check tire wear").
+    var headline: String?
     var priceLow: Int?
     var priceHigh: Int?
     var error: String?
@@ -58,6 +60,7 @@ struct ResearchAgent: Codable, Sendable, Hashable, Identifiable {
         queries = (try? c.decode([String].self, forKey: AnyKey("queries"))) ?? []
         sources = (try? c.decode([ResearchSource].self, forKey: AnyKey("sources"))) ?? []
         summary = c.firstString(["summary"])
+        headline = c.firstString(["headline"])
         priceLow = c.firstInt(["priceLow"])
         priceHigh = c.firstInt(["priceHigh"])
         error = c.firstString(["error"])

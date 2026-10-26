@@ -52,6 +52,17 @@ final class SessionStore {
     }
     private(set) var isCheckingCondition = false
 
+    // Glasses research strip (see `pushResearchStrip`)
+    private var researchStrip: GlassesResearch?
+    private var researchHoldUntil = Date.distantPast
+    private var lastCueID: String?
+    private var lastCueAt = Date.distantPast
+    private var researchStripTask: Task<Void, Never>?
+    /// How long the strip stays up when research starts or an agent finishes.
+    nonisolated static let researchHold: TimeInterval = 5
+    /// While research runs, the strip comes back once no new cue has arrived for this long.
+    nonisolated static let researchCueQuiet: TimeInterval = 6
+
     init(role: Speaker, initial: SessionState, api: APIClient, sync: SessionSync, glasses: GlassesDisplay?) {
         self.role = role
         self.state = initial
@@ -80,7 +91,12 @@ final class SessionStore {
     func stopAll() {
         sync.stop()
         stopMic()
-        if role == .buyer { glasses?.clear() }
+        researchStripTask?.cancel()
+        researchStripTask = nil
+        if role == .buyer {
+            glasses?.showResearch(nil)
+            glasses?.clear()
+        }
     }
 
     func apply(_ new: SessionState) {
@@ -96,8 +112,52 @@ final class SessionStore {
 
     private func pushGlasses() {
         guard role == .buyer, let glasses else { return }
+        let now = Date()
         if let cue = state.glassesCue {
+            if cue.sourceID != lastCueID {
+                // A fresh cue is what the buyer needs right now: it ends any strip hold.
+                lastCueID = cue.sourceID
+                lastCueAt = now
+                researchHoldUntil = now
+            }
             glasses.show(cue)
+        }
+        let strip = GlassesResearch(state.research)
+        if let strip {
+            // Hold the strip when research starts (or restarts) and each time an agent finishes.
+            let previous = researchStrip
+            if previous == nil ? strip.isRunning : strip.doneCount != previous!.doneCount {
+                researchHoldUntil = now.addingTimeInterval(Self.researchHold)
+            }
+        }
+        researchStrip = strip
+        pushResearchStrip()
+    }
+
+    /// The research strip covers the cue while the three agents work, as long as the conversation
+    /// is quiet (no new cue for `researchCueQuiet`), and for `researchHold` after research starts
+    /// or an agent finishes with its headline. Otherwise the live cue shows.
+    private func pushResearchStrip() {
+        researchStripTask?.cancel()
+        researchStripTask = nil
+        guard role == .buyer, let glasses else { return }
+        let now = Date()
+        guard let strip = researchStrip else {
+            glasses.showResearch(nil)
+            return
+        }
+        let quietAt = lastCueAt.addingTimeInterval(Self.researchCueQuiet)
+        let held = now < researchHoldUntil
+        let quiet = strip.isRunning && now >= quietAt
+        glasses.showResearch(held || quiet ? strip : nil)
+
+        // Re-check at the next moment the answer can change on its own.
+        let next = [researchHoldUntil, strip.isRunning ? quietAt : .distantPast].filter { $0 > now }.min()
+        guard let next else { return }
+        researchStripTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(next.timeIntervalSince(now) + 0.05))
+            guard !Task.isCancelled else { return }
+            self?.pushResearchStrip()
         }
     }
 

@@ -13,6 +13,12 @@ protocol GlassesDisplay: AnyObject {
     /// Show a cue. Implementations should no-op when `cue.sourceID` is unchanged.
     func show(_ cue: GlassesCue)
     func clear()
+    /// Show the research strip over the cue, or nil to go back to the cue.
+    func showResearch(_ research: GlassesResearch?)
+}
+
+extension GlassesDisplay {
+    func showResearch(_ research: GlassesResearch?) {}
 }
 
 /// Fallback: a full-screen teleprompter on the buyer's phone (`TeleprompterView`).
@@ -64,5 +70,9 @@ final class GlassesFanOut: GlassesDisplay {
     func clear() {
         phone.clear()
         meta.clear()
+    }
+
+    func showResearch(_ research: GlassesResearch?) {
+        meta.showResearch(research)
     }
 }
