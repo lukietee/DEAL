@@ -727,6 +727,7 @@ final class MetaGlassesDisplay: GlassesDisplay {
     }
 
     /// Feed the mock glasses camera from a video file (Simulator: there is no phone camera).
+    /// It must be HEVC: an H.264 .mp4 reaches `.streaming` but never delivers a frame.
     func setMockCameraFeed(_ fileURL: URL) {
         mockDevice?.services.camera.setCameraFeed(fileURL: fileURL)
     }
