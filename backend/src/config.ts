@@ -28,6 +28,16 @@ export function loadConfig() {
     cueModel: process.env.CUE_MODEL?.trim() || "claude-haiku-5-5",
     agreementModel: process.env.AGREEMENT_MODEL?.trim() || "claude-sonnet-5-5",
     researchModel: process.env.RESEARCH_MODEL?.trim() || "claude-opus-5-5", // live research agents (web search)
+    // Nebius Token Factory (NVIDIA Nemotron). When NEBIUS_API_KEY is set, real mode runs on Nemotron;
+    // AI_PROVIDER=claude forces the Claude path instead.
+    nebiusApiKey: secret("NEBIUS_API_KEY"),
+    nebiusBaseUrl: process.env.NEBIUS_BASE_URL?.trim() || "https://api.tokenfactory.nebius.com/v1",
+    aiProvider: (process.env.AI_PROVIDER?.trim().toLowerCase() || "") as "" | "nebius" | "claude",
+    nemotronFastModel: process.env.NEMOTRON_FAST_MODEL?.trim() || "nvidia/Nemotron-3_5-Lightning", // per-line cues, phrases, detection
+    nemotronModel: process.env.NEMOTRON_MODEL?.trim() || "nvidia/nemotron-3-super-120b-a12b", // research summaries, listing parse
+    nemotronReasoningModel: process.env.NEMOTRON_REASONING_MODEL?.trim() || "nvidia/Nemotron-3-Ultra-550b-a55b", // agreement drafting
+    nemotronVisionModel: process.env.NEMOTRON_VISION_MODEL?.trim() || "nvidia/Nemotron-3.5-Super-VL", // Look identify, condition photos
+    tavilyApiKey: secret("TAVILY_API_KEY"),
     supabaseUrl: secret("SUPABASE_URL"),
     supabaseServiceRoleKey: secret("SUPABASE_SERVICE_ROLE_KEY"),
     stripeSecretKey: secret("STRIPE_SECRET_KEY"),
