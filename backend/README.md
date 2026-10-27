@@ -21,7 +21,7 @@ Other scripts:
 | `npm run build` | `tsc` typecheck (src + tests), then emit `dist/` |
 | `npm start` | run the built server (`node dist/server.js`) |
 | `bash scripts/demo.sh http://<host>:3000` | run the car demo against another URL (`INTERVAL_MS=…` changes the script speed) |
-| `bash scripts/demo-marketplace.sh http://<host>:3100` | run the Marketplace demo: parse listing, session with listing, condition check, bike script, lock $520, **$20 gas fee blocked**, reject, pay $520, dispute pack |
+| `bash scripts/demo-marketplace.sh http://<host>:3100` | run the Marketplace demo (mock mode: in real mode its Facebook link is a 422 by design): parse listing, session with listing, condition check, bike script, lock $520, **$20 gas fee blocked**, reject, pay $520, dispute pack |
 
 For the phone: `ngrok http 3000`, then put the https URL in the iOS `BACKEND_URL`.
 
@@ -31,11 +31,38 @@ Each dependency is chosen on its own:
 
 | Env | Empty / default | Set |
 |---|---|---|
-| `MOCK_MODE` | `true`: cues come from the content scripts' `expected` (matched on line text); free-typed lines use a regex/keyword fallback built on `content/tactics.json`. The agreement comes from the script's `expected_agreement`, or is assembled from extracted terms. The mismatch explanation is a template. | `false`: Claude (`CUE_MODEL` for cues, `AGREEMENT_MODEL` for the agreement and the mismatch sentence). Output is validated with zod, with one retry on invalid JSON. If Claude still fails on a cue, the agreement or the mismatch sentence, it falls back to the mock for that call, so the conversation never stalls. Listing parse failures return 422 and condition-check failures return 502 instead (nothing canned in real mode). The cue model sees the session's live research (finished agents' summaries, price ranges and top sources), not the illustrative comparables. |
+| `MOCK_MODE` | `true`: cues come from the content scripts' `expected` (matched on line text); free-typed lines use a regex/keyword fallback built on `content/tactics.json`. The agreement comes from the script's `expected_agreement`, or is assembled from extracted terms. The mismatch explanation is a template. | `false`: NVIDIA Nemotron on Nebius Token Factory, or Claude (see **AI provider** below). Output is validated with zod, with one retry on invalid JSON. If the model still fails on a cue, detection, the summary, the agreement or the mismatch sentence, that call falls back (Nemotron → Claude when its key is set → mock), so the conversation never stalls. Listing parse failures return 422 and condition-check failures return 502 instead (nothing canned in real mode). The cue model sees the session's live research (finished agents' summaries, price ranges and top sources), not the illustrative comparables. |
 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | in-memory store (lost on restart) | Supabase via the service-role key. Run `../supabase/schema.sql` in the SQL editor first. |
 | `STRIPE_SECRET_KEY` | fake receipt (`pi_mock_…`, `mock: true`) | Stripe **test mode only** (`sk_test_…` is required). A PaymentIntent is created and confirmed server-side with `pm_card_visa`. |
 
-`MOCK_MODE=false` without `ANTHROPIC_API_KEY` logs a warning and uses the mock AI. `GET /health` shows what is active.
+`MOCK_MODE=false` with neither `NEBIUS_API_KEY` nor `ANTHROPIC_API_KEY` logs a warning and uses the mock AI. `GET /health` shows what is active.
+
+### AI provider: NVIDIA Nemotron on Nebius Token Factory (`src/ai/nemotron.ts`, `src/nebius.ts`)
+
+Real mode uses **Nemotron** when `NEBIUS_API_KEY` is set, unless `AI_PROVIDER=claude`; **Claude** (`src/ai/index.ts`) when only
+`ANTHROPIC_API_KEY` is set. With both keys, Nemotron does the work and Claude is the per-call backup. `GET /health` reports
+`ai` (`nemotron` | `claude` | `mock`), `provider` (`nebius` | `anthropic` | `null`) and `models` (which model does each call, plus `backup`).
+
+Every call is one OpenAI-compatible chat completion (plain `fetch`, JSON mode, `chat_template_kwargs.enable_thinking=false`
+unless noted), with the same prompts and zod schemas as the Claude path. Each call goes to the Nemotron model that fits it:
+
+| Call | Model (env, default) | Why | Measured (real, Token Factory) |
+|---|---|---|---|
+| Live cue + speaker "auto" (every line) | `NEMOTRON_CUE_MODEL`, `nvidia/Nemotron-3-Ultra-550b-a55b`, thinking off | Scored on the bike script against its expected cues: Lightning got 0/19 offers right (it converted cents twice) and 8/19 colours; Ultra gets 18/19 and 13/19 and is still fast | median ~1.0 s, max 1.4 s (25 lines) |
+| Product detection, session summary | `NEMOTRON_FAST_MODEL`, `nvidia/Nemotron-3_5-Lightning` | Background / end-of-session, simple extraction; Lightning gets them right | 0.45–0.7 s |
+| Agreement draft | `NEMOTRON_REASONING_MODEL`, `nvidia/Nemotron-3-Ultra-550b-a55b`, **thinking on** | It gets locked, fingerprinted and paid. Thinking (≈1.9k reasoning tokens) costs ~4 s more than off (1.2 s) and adds the open questions the buyer should confirm | ~5.5 s |
+| Mismatch sentence | `NEMOTRON_REASONING_MODEL`, thinking off | One sentence citing the contradicting line | ~0.7 s |
+| Listing from pasted text or a fetched page; condition check from a typed observation | `NEMOTRON_MODEL`, `nvidia/nemotron-3-super-120b-a12b` | Long-ish text in, structured listing out | 0.9–2 s |
+| Listing screenshot, condition-check photo | `NEMOTRON_VISION_MODEL`, `nvidia/Nemotron-3.5-Super-VL` | Vision | photo 2.7–4.8 s, screenshot ~7.8 s |
+
+Nemotron-specific handling: the cue prompt gets `NEMOTRON_CUE_NOTES` (cents scale with examples, the asking price counts as a
+seller offer, the colour rule spelled out, imperative cue examples). Two deterministic guards run on every Nemotron cue: an amount
+more than 20× the session's price that is plausible ÷100 is scaled back (double-converted cents), and a standing offer above
+`max_budget` is always red. A leaked `<think>` block is stripped before JSON is parsed; `extractJson` tolerates prose and fences.
+
+Env: `NEBIUS_API_KEY`, `NEBIUS_BASE_URL` (default `https://api.tokenfactory.nebius.com/v1`), `AI_PROVIDER` (`claude` forces
+Claude; `nebius` / empty = Nemotron when its key is set), `NEMOTRON_CUE_MODEL`, `NEMOTRON_FAST_MODEL`, `NEMOTRON_MODEL`,
+`NEMOTRON_REASONING_MODEL`, `NEMOTRON_VISION_MODEL`. Claude path: `ANTHROPIC_API_KEY`, `CUE_MODEL`, `AGREEMENT_MODEL`.
 
 Content comes from `../content` at runtime (override with `CONTENT_DIR`). No placeholder content was needed. If a file were missing, the loader would also look in `src/mock/content/` (last-resort placeholders), which does not exist today.
 
@@ -154,8 +181,8 @@ Discrepancy = { claim: string /* one of condition_claims */, observed: string, s
 ConditionCheck = { id, at, observation: string | null, had_image: boolean, discrepancies: Discrepancy[], event_id }
 ```
 
-- **`POST /listings/parse`.** We never scrape Facebook. In mock mode the endpoint always returns `content/listings/marketplace_bike.json`, with your `url` copied in when you send one. In real mode, `AGREEMENT_MODEL` reads the pasted `text` and/or the screenshot (`image_base64`, vision; a `data:image/...;base64,` prefix is fine). The output is zod-validated, with one retry. A request with **only** a `url` is read by Claude with the server-side `web_fetch` tool (max 2 fetches; we never fetch the page ourselves). A facebook.com URL forces `source: "facebook_marketplace"`. Real mode never returns the canned listing: if the link can't be read (Facebook is blocked by web_fetch / login wall, fetch error, no title or price), the response is **422** `{"error": "Couldn't read that link. Paste the listing text or a screenshot instead."}`; a failed text/screenshot parse is 422 `{"error": "Couldn't read that listing. Paste the full listing text or a clearer screenshot."}`.
-- **`POST /sessions/:id/condition-check`.** This compares the observation and/or photo with `session.listing.condition_claims`. Mock mode uses keyword rules: tires → "new tires last month", $40, cue "Tires worn: ask $40 off". Scratches, rust, shifting and frame damage are covered too. A photo alone, or an unrecognised observation, gets the canned tires result. "Looks great / matches the listing" gets `[]`. In real mode, Claude (vision) does the comparison, the output is zod-validated, and only claims the listing actually made are kept. If the model fails, the response is 502 `{error}` (no canned result).
+- **`POST /listings/parse`.** We never scrape Facebook. In mock mode the endpoint always returns `content/listings/marketplace_bike.json`, with your `url` copied in when you send one. In real mode the model reads the pasted `text` (Nemotron: `NEMOTRON_MODEL`; Claude: `AGREEMENT_MODEL`) and/or the screenshot (`image_base64`, vision: `NEMOTRON_VISION_MODEL`; a `data:image/...;base64,` prefix is fine). The output is zod-validated, with one retry. A request with **only** a `url`: on Nemotron the server fetches the page itself (`fetchListingPage`: http(s) only, no internal hosts, 8 s timeout, HTML/text only) and passes the title, meta tags, JSON-LD and visible text to `NEMOTRON_MODEL`; facebook.com links are rejected at once without a fetch (login wall). On Claude, the server-side `web_fetch` tool reads it (max 2 fetches). A facebook.com URL forces `source: "facebook_marketplace"`. Real mode never returns the canned listing: if the link can't be read (Facebook, login wall, fetch error, not a listing, no title or price), the response is **422** `{"error": "Couldn't read that link. Paste the listing text or a screenshot instead."}`; a failed text/screenshot parse is 422 `{"error": "Couldn't read that listing. Paste the full listing text or a clearer screenshot."}`.
+- **`POST /sessions/:id/condition-check`.** This compares the observation and/or photo with `session.listing.condition_claims`. Mock mode uses keyword rules: tires → "new tires last month", $40, cue "Tires worn: ask $40 off". Scratches, rust, shifting and frame damage are covered too. A photo alone, or an unrecognised observation, gets the canned tires result. "Looks great / matches the listing" gets `[]`. In real mode the model does the comparison (Nemotron: `NEMOTRON_VISION_MODEL` for a photo, `NEMOTRON_MODEL` for a typed observation; Claude: `AGREEMENT_MODEL` with vision), the output is zod-validated, and only claims the listing actually made are kept. If the model fails, the response is 502 `{error}` (no canned result).
 - **How it reaches the glasses.** The check inserts a normal `Event` with `kind: "condition_check"` and `speaker: "buyer"`. Its `text` is "Condition check: …", `tactic` is `undisclosed_condition`, `cue` is the first discrepancy's cue, and `cue_detail` is `Listing says "<claim>"` (or "N issues, ask $X off"). `status_color` is yellow, or red when the standing offer is above max, or green when nothing is wrong. The standing offer and terms stay unchanged. The phones already show the latest event's cue, so this cue reaches the glasses and teleprompter over the same path (Realtime on `events`) with no new subscription. The check is also appended to `session.condition_checks`.
 - **Dispute pack.** It now has `listing` (or `null`) and `condition_discrepancies: [{claim, observed, suggested_discount, cue, checked_at, event_id}]`. The condition-check events are added to `transcript_excerpts`.
 - **Supabase.** New columns: `sessions.listing jsonb`, `sessions.condition_checks jsonb` and `events.kind text`. `schema.sql` adds them idempotently.
