@@ -10,4 +10,4 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ```
 
 - When spawning a subagent that may commit, repeat this rule in its prompt.
-- Don't push without Lucas's OK.
+- Push to GitHub right after every commit (`git push origin <current branch>`), so every commit shows on Lucas's contribution graph the same day. Never force-push.
