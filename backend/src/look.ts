@@ -3,15 +3,20 @@
 //   POST /look/price     a quick market price for the scanner's price window.
 // Contract: ios/DEAL/Look/LookContracts.swift (LookIdentification, LookPrice).
 //
-// Both run on the fast CUE_MODEL. Identify is one vision call; price is one call with at most
-// 2 basic web searches (not the 15-25 s research agents). Prices are cached in memory per
-// normalized name for 30 min, and concurrent requests for the same name share one call.
+// Nemotron path (NEBIUS_API_KEY + TAVILY_API_KEY, see researchProvider): identify is one NEMOTRON_VISION_MODEL
+// call; price is one Tavily search plus one NEMOTRON_FAST_MODEL call that reads the snippets (~1-2 s).
+// Claude path (fallback): both run on the fast CUE_MODEL; price is one call with at most 2 basic web searches.
+// Prices are cached in memory per normalized name for 30 min, and concurrent requests for the same name
+// share one call.
 // Mock mode returns The Weeknd "Starboy" vinyl so the iOS demo works without keys.
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { extractJson } from "./ai/index.js";
 import { decodeImage } from "./listing.js";
 import { formatCentsShort as formatCents } from "./money.js";
+import { imagePart, type NemotronMessage } from "./nebius.js";
+import { chatJson, type SearchAi } from "./research.js";
+import type { TavilyResult } from "./tavily.js";
 
 type Logger = { warn: (obj: unknown, msg?: string) => void };
 
@@ -159,12 +164,33 @@ export function pricePrompt(input: PriceInput): string {
   ].join("\n");
 }
 
+/** Nemotron path: the same ask, answered from one Tavily search's snippets. */
+export function priceFromResultsPrompt(input: PriceInput, results: TavilyResult[]): string {
+  const block = results
+    .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.content.replace(/\s+/g, " ").trim().slice(0, 500)}`)
+    .join("\n\n");
+  return [
+    `Quick market price check for: ${input.name}${input.category ? ` (category: ${input.category})` : ""}.`,
+    `A buyer is looking at it right now. Current US used / sold and new prices from a web search (Tavily):`,
+    ``,
+    block || "(no results)",
+    ``,
+    `Use ONLY these results; never invent a price. Prefer used / sold prices for the range; mention new if you see it.`,
+    `Reply with ONLY a JSON object:`,
+    `{"price_low": <integer cents, typical used low>, "price_high": <integer cents, typical used high>,`,
+    ` "summary": "<one line, at most 40 characters, e.g. \\"Used $22–30 · new $35\\">", "source_count": <how many results your numbers came from>}`,
+    `Prices are integer cents ($25 = 2500). If no result has a usable price, use null for both and say so in the summary.`,
+  ].join("\n");
+}
+
 // ---------- runner ----------
 
 export interface LookDeps {
   mockMode: boolean;
-  client: Anthropic | null;
+  client: Anthropic | null; // Claude path
   model: string; // CUE_MODEL: fast, vision-capable
+  /** Nemotron + Tavily path; takes precedence over `client` when set. */
+  search?: SearchAi | null;
   log: Logger;
   ttlMs?: number;
   now?: () => number; // injectable clock for cache tests
@@ -186,7 +212,7 @@ export class LookRunner {
     this.now = deps.now ?? Date.now;
   }
 
-  private get real() { return !this.deps.mockMode && !!this.deps.client; }
+  private get real() { return !this.deps.mockMode && (!!this.deps.search || !!this.deps.client); }
 
   stopAll() {
     this.cache.clear();
@@ -196,6 +222,7 @@ export class LookRunner {
   /** POST /look/identify. Real mode: one vision call, zod-validated, retried once. Failure throws LookError (502). */
   async identify(input: IdentifyInput): Promise<LookIdentification> {
     if (!this.real) return { ...MOCK_IDENTIFICATION };
+    if (this.deps.search) return this.nemotronIdentify(input, this.deps.search);
     const { data, media_type } = decodeImage(input.image_base64);
     const user: Anthropic.ContentBlockParam[] = [
       { type: "image", source: { type: "base64", media_type, data } },
@@ -223,6 +250,20 @@ export class LookRunner {
       } catch (err2) {
         return this.fail("identify", err2);
       }
+    }
+  }
+
+  /** NEMOTRON_VISION_MODEL, same system prompt; no JSON mode (the VL model answers ~2x faster without it). */
+  private async nemotronIdentify(input: IdentifyInput, ai: SearchAi): Promise<LookIdentification> {
+    const { data, media_type } = decodeImage(input.image_base64);
+    const messages: NemotronMessage[] = [
+      { role: "system", content: IDENTIFY_SYSTEM },
+      { role: "user", content: [imagePart(data, media_type), { type: "text", text: identifyUserPrompt(input.hint) }] },
+    ];
+    try {
+      return await chatJson(ai, ai.visionModel, messages, parseIdentification, { maxTokens: 300, timeoutMs: 15_000, json: false });
+    } catch (err) {
+      return this.fail("identify", err);
     }
   }
 
@@ -254,6 +295,7 @@ export class LookRunner {
       await new Promise((r) => setTimeout(r, MOCK_PRICE_DELAY_MS));
       return mockPrice(input.name);
     }
+    if (this.deps.search) return this.nemotronPrice(input, this.deps.search);
     // Basic web search (Haiku-class models don't take the dynamic-filtering variant), no page fetches.
     const tools: Anthropic.ToolUnion[] = [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }];
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: pricePrompt(input) }];
@@ -277,6 +319,17 @@ export class LookRunner {
         if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content) results.add(r.url);
       }
       return parsePrice(input.name, extractJson(textOf(msg)), results.size);
+    } catch (err) {
+      return this.fail("price", err);
+    }
+  }
+
+  /** One advanced Tavily search (2 credits; its snippets carry prices), then NEMOTRON_FAST_MODEL reads them. */
+  private async nemotronPrice(input: PriceInput, ai: SearchAi): Promise<LookPrice> {
+    try {
+      const res = await ai.tavily.search({ query: `${input.name} price used sold`, maxResults: 6, depth: "advanced", timeoutMs: 8000 });
+      const prompt = priceFromResultsPrompt(input, res.results);
+      return await chatJson(ai, ai.fastModel, [{ role: "user", content: prompt }], (raw) => parsePrice(input.name, raw, res.results.length), { maxTokens: 300, timeoutMs: 10_000 });
     } catch (err) {
       return this.fail("price", err);
     }

@@ -1,18 +1,26 @@
 // Live market research + suggested phrases.
 //
 // Research: when a session starts, three research agents run in parallel (comparable prices, known issues,
-// fair price / negotiation leverage). In real mode each is a Claude call with the server-side web_search
-// tool, streamed so the phone sees queries and sources arrive live; afterwards we fetch the og:image of
-// the top result pages so the app can show pictures. In mock mode the agents replay content/comparables
-// on a timer so the UI still animates.
+// fair price / negotiation leverage). Real mode has two providers (see researchProvider):
+//   - Nemotron (NEBIUS_API_KEY + TAVILY_API_KEY): each agent runs 2-3 templated Tavily searches in parallel,
+//     then one NEMOTRON_MODEL call turns the snippets into summary / headline / price range / per-source notes.
+//     All three agents finish in ~3-5 s.
+//   - Claude (fallback): each agent is a Claude call with the server-side web_search tool, streamed (~15-25 s).
+// Both fill the same agent fields live (status, activity, queries, sources) so the phone and the glasses
+// animate, then fetch the og:image of the top result pages so the app can show pictures. In mock mode the
+// agents replay content/comparables on a timer so the UI still animates.
 //
-// Suggested phrases: after every transcript line, 2-3 full sentences the buyer could say next.
+// Suggested phrases: after every transcript line, 2-3 full sentences the buyer could say next
+// (NEMOTRON_FAST_MODEL, or CUE_MODEL on the Claude path).
 //
 // State lives in memory on the Deal (like script runs) and is returned by GET /sessions/:id.
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import type { Config } from "./config.js";
 import { getComparables, normalizeCategory } from "./content.js";
 import { formatCentsShort as formatCents } from "./money.js";
+import { NemotronClient, type NemotronMessage } from "./nebius.js";
+import { TavilyClient, type TavilyResponse, type TavilyResult } from "./tavily.js";
 import type { DealEvent, Session } from "./types.js";
 
 export type AgentStatus = "queued" | "searching" | "reading" | "done" | "error";
@@ -58,23 +66,36 @@ export interface Suggestions {
 type Logger = { warn: (obj: unknown, msg?: string) => void };
 const now = () => new Date().toISOString();
 
-interface AgentSpec { id: ResearchAgent["id"]; title: string; goal: string }
+interface AgentSpec {
+  id: ResearchAgent["id"];
+  title: string;
+  goal: string;
+  /** Tavily path: the agent's searches (run in parallel) for a short item name. */
+  queries: (item: string) => string[];
+  depth: "basic" | "advanced"; // advanced = 2 credits, but snippets carry the prices
+}
 
 const AGENTS: AgentSpec[] = [
   {
     id: "comps",
     title: "Comparable listings",
     goal: "Find 3-5 current or recent listings/sales for the same or a very similar used item, with their prices. Prefer marketplace, eBay sold, Craigslist, OfferUp, dealer or classifieds pages.",
+    queries: (item) => [`${item} used for sale price`, `${item} sold listings eBay`, `${item} Facebook Marketplace Craigslist OfferUp`],
+    depth: "advanced",
   },
   {
     id: "issues",
     title: "Known issues & wear",
     goal: "Find the common problems, wear items and inspection points for this item that a buyer should check in person, and roughly what each costs to fix.",
+    queries: (item) => [`${item} common problems`, `${item} what to check before buying used`],
+    depth: "basic",
   },
   {
     id: "price",
     title: "Fair price & leverage",
     goal: "Estimate a fair used price range for this item from price guides, reviews or sold data, and note any negotiation leverage (new-model discounts, depreciation, seasonality).",
+    queries: (item) => [`${item} used value price guide`, `${item} new price MSRP review`],
+    depth: "advanced",
   },
 ];
 
@@ -104,6 +125,12 @@ export function itemDescription(s: Session): string {
   if (!l) return s.item;
   const claims = l.condition_claims.length ? ` (listing claims: ${l.condition_claims.join("; ")})` : "";
   return `${l.title}${claims}`;
+}
+
+/** Short search name: the listing title (no claims) or the item, at most ~120 chars. */
+export function searchName(s: Pick<Session, "item" | "listing">): string {
+  const name = (s.listing?.title ?? s.item).replace(/\s+/g, " ").trim();
+  return name.length > 120 ? name.slice(0, 120).replace(/\s+\S*$/, "") : name;
 }
 
 function extractJson(text: string): unknown {
@@ -171,12 +198,9 @@ export interface AgentContext {
   live: boolean; // true = mid-negotiation (session agents); false = before the meetup (preview)
 }
 
-/** Run one research agent with Claude + server-side web search, filling `agent` live as blocks stream in. */
-export async function runClaudeAgent(client: Anthropic, model: string, spec: AgentSpec, agent: ResearchAgent, ctx: AgentContext) {
-  agent.status = "searching";
-  agent.started_at = now();
-  agent.activity = "Planning searches";
-  const prompt = [
+/** The opening of every agent prompt: who the buyer is, the numbers, the agent's job. */
+function agentBrief(spec: AgentSpec, ctx: AgentContext): string[] {
+  return [
     ctx.live
       ? `You are one of three research agents helping a buyer who is negotiating in person, right now, for: ${ctx.item}.`
       : `You are a research agent helping a buyer who is about to meet a seller in person to buy: ${ctx.item}.`,
@@ -187,12 +211,43 @@ export async function runClaudeAgent(client: Anthropic, model: string, spec: Age
     ].filter(Boolean).join(" "),
     ``,
     `Your job: ${spec.goal}`,
+  ];
+}
+
+const OUTPUT_SPEC = [
+  `{"summary": "<= 2 short sentences a buyer can act on", "headline": "<= 4 words for a heads-up display, e.g. \"$590-725 nearby\" or \"Check tire wear\"", "price_low": <integer cents or null>, "price_high": <integer cents or null>,`,
+  ` "sources": [{"title": "...", "url": "<a page URL you actually found>", "price": <integer cents or null>, "note": "<= 8 words"}]}`,
+  `List up to 5 sources, best first. Prices are integer cents (e.g. $520 = 52000).`,
+];
+
+/** Copy a validated model answer onto the agent: its picks first (they carry price/note), other hits after. */
+function applyOutput(agent: ResearchAgent, out: z.infer<typeof ResearchOutput>, known?: Map<string, string>) {
+  const picked: ResearchSource[] = out.sources
+    .filter((s) => /^https?:\/\//.test(s.url) && (!known || known.has(s.url)) )
+    .filter((s, i, all) => all.findIndex((o) => o.url === s.url) === i)
+    .map((s) => ({ title: known?.get(s.url) ?? s.title, url: s.url, price: s.price ?? null, note: s.note ?? null, image_url: null }));
+  const rest = agent.sources.filter((s) => !picked.some((p) => p.url === s.url));
+  agent.sources = [...picked, ...rest].slice(0, 8);
+  agent.summary = out.summary;
+  agent.price_low = out.price_low ?? null;
+  agent.price_high = out.price_high ?? null;
+  if (agent.price_low != null && agent.price_high != null && agent.price_low > agent.price_high) {
+    [agent.price_low, agent.price_high] = [agent.price_high, agent.price_low];
+  }
+  agent.headline = agentHeadline(out.headline, agent);
+}
+
+/** Run one research agent with Claude + server-side web search, filling `agent` live as blocks stream in. */
+export async function runClaudeAgent(client: Anthropic, model: string, spec: AgentSpec, agent: ResearchAgent, ctx: AgentContext) {
+  agent.status = "searching";
+  agent.started_at = now();
+  agent.activity = "Planning searches";
+  const prompt = [
+    ...agentBrief(spec, ctx),
     ctx.live ? `Use web search (at most 3 searches). Be quick; the buyer is mid-conversation.` : `Use web search (at most 3 searches). Be quick; the buyer is waiting on this screen.`,
     ``,
     `Finish with ONLY a JSON object, no prose around it:`,
-    `{"summary": "<= 2 short sentences a buyer can act on", "headline": "<= 4 words for a heads-up display, e.g. \"$590-725 nearby\" or \"Check tire wear\"", "price_low": <integer cents or null>, "price_high": <integer cents or null>,`,
-    ` "sources": [{"title": "...", "url": "<a page URL you actually found>", "price": <integer cents or null>, "note": "<= 8 words"}]}`,
-    `List up to 5 sources, best first. Prices are integer cents (e.g. $520 = 52000).`,
+    ...OUTPUT_SPEC,
   ].join("\n");
 
   const stream = client.beta.messages.stream({
@@ -228,23 +283,138 @@ export async function runClaudeAgent(client: Anthropic, model: string, spec: Age
   const msg = await stream.finalMessage();
   if (msg.stop_reason === "refusal") throw new Error("model declined the research request");
   const text = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
-  const out = ResearchOutput.parse(extractJson(text));
-
-  // The model's own picks go first (they carry price/note); keep other search hits after them.
-  const picked: ResearchSource[] = out.sources
-    .filter((s) => /^https?:\/\//.test(s.url))
-    .map((s) => ({ title: s.title, url: s.url, price: s.price ?? null, note: s.note ?? null, image_url: null }));
-  const rest = agent.sources.filter((s) => !picked.some((p) => p.url === s.url));
-  agent.sources = [...picked, ...rest].slice(0, 8);
-  agent.summary = out.summary;
-  agent.price_low = out.price_low ?? null;
-  agent.price_high = out.price_high ?? null;
-  agent.headline = agentHeadline(out.headline, agent);
+  applyOutput(agent, ResearchOutput.parse(extractJson(text)));
 
   agent.activity = "Pulling images";
   await Promise.all(
     agent.sources.slice(0, 4).map(async (s) => { s.image_url = await fetchPageImage(s.url); }),
   );
+  agent.status = "done";
+  agent.activity = `${agent.queries.length} searches · ${agent.sources.length} sources`;
+  agent.finished_at = now();
+}
+
+// ---------- one Nemotron research agent (Tavily search) ----------
+
+/** The Nemotron + Tavily path (Nebius Token Factory). Interfaces, not classes, so tests can pass fakes. */
+export interface SearchAi {
+  tavily: Pick<TavilyClient, "search">;
+  nemotron: Pick<NemotronClient, "chat">;
+  model: string; // NEMOTRON_MODEL: research synthesis
+  fastModel: string; // NEMOTRON_FAST_MODEL: suggested phrases, Look price
+  visionModel: string; // NEMOTRON_VISION_MODEL: Look identify
+}
+
+export function createSearchAi(cfg: Config): SearchAi {
+  return {
+    tavily: new TavilyClient(cfg.tavilyApiKey),
+    nemotron: new NemotronClient(cfg.nebiusApiKey, cfg.nebiusBaseUrl),
+    model: cfg.nemotronModel,
+    fastModel: cfg.nemotronFastModel,
+    visionModel: cfg.nemotronVisionModel,
+  };
+}
+
+export type ResearchProvider = "nemotron" | "claude" | "mock";
+
+/**
+ * Research / Look provider, same rule as the core AI: Nemotron when NEBIUS_API_KEY is set (and, for search,
+ * TAVILY_API_KEY) unless AI_PROVIDER=claude; else Claude when ANTHROPIC_API_KEY is set; else mock.
+ */
+export function researchProvider(cfg: Pick<Config, "mockMode" | "aiProvider" | "nebiusApiKey" | "tavilyApiKey" | "anthropicApiKey">): ResearchProvider {
+  if (cfg.mockMode) return "mock";
+  if (cfg.nebiusApiKey && cfg.tavilyApiKey && cfg.aiProvider !== "claude") return "nemotron";
+  if (cfg.anthropicApiKey) return "claude";
+  return "mock";
+}
+
+const SNIPPET_CHARS = 600;
+const MAX_RESULTS = 10; // per agent, after dedupe, fed to the model
+
+/** Tavily results as numbered blocks for the synthesis prompt. */
+function resultsBlock(results: TavilyResult[]): string {
+  return results
+    .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.content.replace(/\s+/g, " ").trim().slice(0, SNIPPET_CHARS)}`)
+    .join("\n\n");
+}
+
+/** One JSON chat call, retried once with the validation error if the reply doesn't parse. */
+export async function chatJson<T>(ai: SearchAi, model: string, messages: NemotronMessage[], parse: (raw: unknown) => T, opts: { maxTokens: number; timeoutMs: number; json?: boolean }): Promise<T> {
+  const send = (msgs: NemotronMessage[]) =>
+    ai.nemotron.chat({ model, messages: msgs, maxTokens: opts.maxTokens, temperature: 0.2, json: opts.json ?? true, timeoutMs: opts.timeoutMs });
+  const first = (await send(messages)).text;
+  try {
+    return parse(extractJson(first));
+  } catch (err) {
+    const retry = await send([
+      ...messages,
+      { role: "assistant", content: first },
+      { role: "user", content: `That was not valid. Error: ${String(err).slice(0, 300)}. Reply with ONLY the corrected JSON object.` },
+    ]);
+    return parse(extractJson(retry.text));
+  }
+}
+
+/**
+ * Run one research agent on Tavily + Nemotron, filling `agent` live: its searches run in parallel (sources
+ * appear as each one lands), og:images are fetched while one NEMOTRON_MODEL call writes the summary.
+ * Throws if every search fails or the model output is invalid twice.
+ */
+export async function runNemotronAgent(ai: SearchAi, spec: AgentSpec, agent: ResearchAgent, ctx: AgentContext & { search_name: string }) {
+  agent.status = "searching";
+  agent.started_at = now();
+  agent.activity = "Planning searches";
+  const queries = spec.queries(ctx.search_name);
+  agent.queries.push(...queries);
+  agent.activity = `Searching "${queries[0]}"${queries.length > 1 ? ` +${queries.length - 1} more` : ""}`;
+
+  const results: TavilyResult[] = [];
+  const images: string[] = [];
+  const settled = await Promise.allSettled(
+    queries.map(async (query) => {
+      const res: TavilyResponse = await ai.tavily.search({ query, maxResults: 5, depth: spec.depth, includeImages: spec.id === "comps", timeoutMs: 8000 });
+      for (const r of res.results) {
+        if (!r.url || results.some((o) => o.url === r.url)) continue;
+        results.push(r);
+        agent.sources.push({ title: r.title || r.url, url: r.url, price: null, note: null, image_url: null });
+      }
+      images.push(...res.images.filter((u) => u.startsWith("https://") && !images.includes(u)));
+      agent.status = "reading";
+      agent.activity = `Reading ${agent.sources.length} pages`;
+    }),
+  );
+  if (settled.every((r) => r.status === "rejected")) throw (settled[0] as PromiseRejectedResult).reason;
+
+  // Best results first (Tavily's relevance score), for the prompt and the fallback source order.
+  results.sort((a, b) => b.score - a.score);
+  const top = results.slice(0, MAX_RESULTS);
+  agent.sources = results.map((r) => ({ title: r.title || r.url, url: r.url, price: null, note: null, image_url: null }));
+  const pageImages = new Map(top.slice(0, 5).map((r) => [r.url, fetchPageImage(r.url, 2500)] as const));
+
+  agent.activity = "Writing summary";
+  const prompt = [
+    ...agentBrief(spec, ctx),
+    ``,
+    top.length ? `Web search results (Tavily):\n\n${resultsBlock(top)}` : `The web search found nothing.`,
+    ``,
+    `Use ONLY these results; never invent a source, URL or price. If they hold no usable prices, use null.`,
+    `Reply with ONLY a JSON object:`,
+    ...OUTPUT_SPEC,
+  ].join("\n");
+  const out = await chatJson(ai, ai.model, [{ role: "user", content: prompt }], (raw) => ResearchOutput.parse(raw), { maxTokens: 1200, timeoutMs: 20_000 });
+  applyOutput(agent, out, new Map(top.map((r) => [r.url, r.title || r.url])));
+
+  agent.activity = "Pulling images";
+  await Promise.all(agent.sources.slice(0, 4).map(async (s) => { s.image_url = (await pageImages.get(s.url)) ?? null; }));
+  // Pages without an og:image get the search's own item photos (comps only), checked like og:images.
+  const spare = images.filter((u) => !agent.sources.some((s) => s.image_url === u));
+  for (const s of agent.sources.slice(0, 4)) {
+    if (s.image_url) continue;
+    let url: string | undefined;
+    while ((url = spare.shift()) && !(await isImage(url, 2500)));
+    if (!url) break;
+    s.image_url = url;
+  }
   agent.status = "done";
   agent.activity = `${agent.queries.length} searches · ${agent.sources.length} sources`;
   agent.finished_at = now();
@@ -311,9 +481,11 @@ export function mockPreview(category: string, askingPrice: number | null): Resea
 
 export interface ResearchDeps {
   mockMode: boolean;
-  client: Anthropic | null;
-  model: string; // research agents (web search)
-  cueModel: string; // suggested phrases
+  client: Anthropic | null; // Claude path
+  model: string; // Claude research agents (web search)
+  cueModel: string; // Claude suggested phrases
+  /** Nemotron + Tavily path; takes precedence over `client` when set. */
+  search?: SearchAi | null;
   log: Logger;
 }
 
@@ -326,6 +498,11 @@ export class ResearchRunner {
   constructor(private deps: ResearchDeps) {}
 
   research(sessionId: string): ResearchState | null { return this.states.get(sessionId) ?? null; }
+
+  get provider(): ResearchProvider {
+    if (this.deps.mockMode) return "mock";
+    return this.deps.search ? "nemotron" : this.deps.client ? "claude" : "mock";
+  }
   suggestionsFor(sessionId: string): Suggestions | null { return this.suggestions.get(sessionId) ?? null; }
 
   stopAll() {
@@ -341,7 +518,7 @@ export class ResearchRunner {
     this.states.set(session.id, state);
     const runs = AGENTS.map((spec, i) => {
       const agent = state.agents[i]!;
-      const run = this.deps.mockMode || !this.deps.client ? this.mockAgent(session, agent, i) : this.claudeAgent(session, spec, agent);
+      const run = this.provider === "mock" ? this.mockAgent(session, agent, i) : this.realAgent(session, spec, agent);
       return run.catch((err) => {
         agent.status = "error";
         agent.error = String(err).slice(0, 300);
@@ -358,9 +535,10 @@ export class ResearchRunner {
     return new Promise<void>((resolve) => { const t = setTimeout(() => { this.timers.delete(t); resolve(); }, ms); this.timers.add(t); });
   }
 
-  private async claudeAgent(session: Session, spec: AgentSpec, agent: ResearchAgent) {
-    await runClaudeAgent(this.deps.client!, this.deps.model, spec, agent, {
+  private async realAgent(session: Session, spec: AgentSpec, agent: ResearchAgent) {
+    await this.runAgent(spec, agent, {
       item: itemDescription(session),
+      search_name: searchName(session),
       category: session.category,
       asking_price: session.asking_price,
       target_price: session.target_price,
@@ -368,22 +546,29 @@ export class ResearchRunner {
     });
   }
 
+  private runAgent(spec: AgentSpec, agent: ResearchAgent, ctx: AgentContext & { search_name: string }) {
+    return this.deps.search
+      ? runNemotronAgent(this.deps.search, spec, agent, ctx)
+      : runClaudeAgent(this.deps.client!, this.deps.model, spec, agent, ctx);
+  }
+
   /**
    * POST /research/preview: one "comparable listings" agent, no session, blocking until it finishes.
-   * Real mode: Claude + web search (same code as the session agents), then og:images. Mock mode: the
+   * Real mode: Tavily + Nemotron (or Claude + web search), same code as the session agents, then og:images. Mock mode: the
    * category's content/comparables listings after ~1.5 s. A failed agent returns nulls (and any search hits).
    */
   async preview(input: PreviewInput): Promise<ResearchPreview> {
     const category = normalizeCategory(input.category ?? "") || "marketplace";
-    if (this.deps.mockMode || !this.deps.client) {
+    if (this.provider === "mock") {
       await new Promise((r) => setTimeout(r, MOCK_PREVIEW_DELAY_MS));
       return mockPreview(category, input.asking_price ?? null);
     }
     const spec = AGENTS.find((a) => a.id === "comps")!;
     const agent = newAgent(spec);
     try {
-      await runClaudeAgent(this.deps.client, this.deps.model, spec, agent, {
-        item: input.item, category, asking_price: input.asking_price ?? null, target_price: null, live: false,
+      await this.runAgent(spec, agent, {
+        item: input.item, search_name: searchName({ item: input.item, listing: null }), category,
+        asking_price: input.asking_price ?? null, target_price: null, live: false,
       });
     } catch (err) {
       this.deps.log.warn({ err: String(err) }, "research preview failed");
@@ -461,18 +646,37 @@ export class ResearchRunner {
       this.suggestions.set(session.id, { for_event_id: last?.id ?? null, phrases, updated_at: now() });
     };
     const fallback = () => mockPhrases(session, last, this.research(session.id));
-    if (this.deps.mockMode || !this.deps.client) { apply(fallback()); return; }
-    void this.claudePhrases(session, events).then(apply).catch((err) => {
+    if (this.provider === "mock") { apply(fallback()); return; }
+    const phrases = this.deps.search ? this.nemotronPhrases(session, events) : this.claudePhrases(session, events);
+    void phrases.then(apply).catch((err) => {
       this.deps.log.warn({ err: String(err) }, "suggested phrases failed; using template");
       apply(fallback());
     });
   }
 
   private async claudePhrases(session: Session, events: DealEvent[]): Promise<Suggestions["phrases"]> {
+    const msg = await this.deps.client!.messages.create({
+      model: this.deps.cueModel,
+      max_tokens: 2000,
+      output_config: { effort: "low" },
+      messages: [{ role: "user", content: this.phrasesPrompt(session, events) }],
+    });
+    if (msg.stop_reason === "refusal") throw new Error("model declined");
+    const text = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+    return PhrasesOutput.parse(extractJson(text)).phrases;
+  }
+
+  /** NEMOTRON_FAST_MODEL, JSON mode, no thinking (~0.5-1 s). */
+  private async nemotronPhrases(session: Session, events: DealEvent[]): Promise<Suggestions["phrases"]> {
+    const ai = this.deps.search!;
+    return chatJson(ai, ai.fastModel, [{ role: "user", content: this.phrasesPrompt(session, events) }], (raw) => PhrasesOutput.parse(raw).phrases, { maxTokens: 600, timeoutMs: 10_000 });
+  }
+
+  private phrasesPrompt(session: Session, events: DealEvent[]): string {
     const research = this.research(session.id);
     const findings = research?.agents.filter((a) => a.summary).map((a) => `${a.title}: ${a.summary}`) ?? [];
     const transcript = events.slice(-8).map((e) => `${e.speaker}: ${e.text}`).join("\n");
-    const prompt = [
+    return [
       `You coach a buyer negotiating in person for: ${session.item.trim() ? itemDescription(session) : "an item not identified yet (infer it from the conversation)"}.`,
       [
         `Asking ${session.asking_price != null ? formatCents(session.asking_price) : "not heard yet"}.`,
@@ -489,15 +693,6 @@ export class ResearchRunner {
       `Give the buyer 3 different things they could say next, each one natural spoken sentence (max 22 words), polite but firm, citing a concrete fact or number when you have one.`,
       `Reply with ONLY JSON: {"phrases": [{"text": "...", "why": "<= 6 words"}]}`,
     ].filter(Boolean).join("\n");
-    const msg = await this.deps.client!.messages.create({
-      model: this.deps.cueModel,
-      max_tokens: 2000,
-      output_config: { effort: "low" },
-      messages: [{ role: "user", content: prompt }],
-    });
-    if (msg.stop_reason === "refusal") throw new Error("model declined");
-    const text = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
-    return PhrasesOutput.parse(extractJson(text)).phrases;
   }
 
 }

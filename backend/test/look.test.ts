@@ -5,9 +5,10 @@ import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { MockAi } from "../src/ai/index.js";
 import {
-  LookRunner, MOCK_IDENTIFICATION, MOCK_PRICE_DELAY_MS, mockPrice, normalizeName, parseIdentification, parsePrice,
+  IDENTIFY_SYSTEM, LookError, LookRunner, MOCK_IDENTIFICATION, MOCK_PRICE_DELAY_MS, mockPrice, normalizeName, parseIdentification, parsePrice,
 } from "../src/look.js";
 import { MockPayments } from "../src/payments/index.js";
+import type { SearchAi } from "../src/research.js";
 import { MemoryStore } from "../src/store/memory.js";
 
 const quiet = { warn: () => undefined };
@@ -206,5 +207,99 @@ describe("look mode: real-mode runner", () => {
     const t1 = Date.now();
     await look.price({ name: STARBOY });
     expect(Date.now() - t1).toBeLessThan(MOCK_PRICE_DELAY_MS); // served from cache
+  });
+});
+
+// ---------- Nemotron + Tavily path (fake clients, no network) ----------
+
+function fakeSearch(opts: { visionReplies?: string[]; priceReply?: (prompt: string) => string; delayMs?: number; failSearch?: boolean } = {}) {
+  const searches: any[] = [];
+  const chats: any[] = [];
+  const vision = [...(opts.visionReplies ?? [])];
+  const wait = () => new Promise((r) => setTimeout(r, opts.delayMs ?? 0));
+  const search: SearchAi = {
+    model: "nvidia/super", fastModel: "nvidia/lightning", visionModel: "nvidia/vl",
+    tavily: {
+      search: async (s) => {
+        searches.push(s);
+        await wait();
+        if (opts.failSearch) throw new Error("Tavily 500");
+        return {
+          query: s.query, images: [], responseTime: 0.3,
+          results: [
+            { title: "Discogs", url: "https://www.discogs.com/a", content: "Starboy 2xLP, median $27", score: 0.9 },
+            { title: "eBay sold", url: "https://www.ebay.com/b", content: "Sold $22, $30", score: 0.8 },
+          ],
+        };
+      },
+    },
+    nemotron: {
+      chat: async (req) => {
+        chats.push(structuredClone(req));
+        await wait();
+        const text = req.model === "nvidia/vl"
+          ? (vision.shift() ?? "no more replies")
+          : (opts.priceReply ?? (() => JSON.stringify({ price_low: 2200, price_high: 3000, summary: "Used $22–30 · new $35", source_count: 5 })))(JSON.stringify(req.messages));
+        return { text, model: req.model, usage: null, finishReason: "stop" };
+      },
+    },
+  };
+  return { search, searches, chats };
+}
+
+describe("look mode: Nemotron + Tavily runner", () => {
+  it("identify: one NEMOTRON_VISION_MODEL call with the image and the strict prompt, retried once", async () => {
+    const { search, chats } = fakeSearch({ visionReplies: ["It is a record.", JSON.stringify({ is_product: true, name: STARBOY, category: "Vinyl", confidence: 0.9 })] });
+    const look = new LookRunner({ mockMode: false, client: null, search, model: "", log: quiet });
+    expect(await look.identify({ image_base64: `data:image/jpeg;base64,${JPEG}`, hint: "vinyl" })).toEqual({ is_product: true, name: STARBOY, category: "vinyl", confidence: 0.9 });
+    expect(chats).toHaveLength(2);
+    expect(chats[0].model).toBe("nvidia/vl");
+    expect(chats[0].messages[0]).toEqual({ role: "system", content: IDENTIFY_SYSTEM });
+    expect(chats[0].messages[1].content[0]).toEqual({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${JPEG}` } });
+    expect(chats[0].messages[1].content[1].text).toContain("hint");
+    expect(chats[1].messages.at(-1).content).toContain("not valid");
+  });
+
+  it("identify: non-products stay non-products; failure is a LookError", async () => {
+    const { search } = fakeSearch({ visionReplies: [JSON.stringify({ is_product: false, name: "a hand", category: null, confidence: 0.97 }), "x", "y"] });
+    const look = new LookRunner({ mockMode: false, client: null, search, model: "", log: quiet });
+    expect(await look.identify({ image_base64: JPEG })).toEqual({ is_product: false, name: null, category: null, confidence: 0.97 });
+    await expect(look.identify({ image_base64: JPEG })).rejects.toBeInstanceOf(LookError);
+  });
+
+  it("price: one Tavily search + one fast-model call, source_count capped by the results", async () => {
+    const { search, searches, chats } = fakeSearch();
+    const look = new LookRunner({ mockMode: false, client: null, search, model: "", log: quiet });
+    expect(await look.price({ name: STARBOY, category: "vinyl" })).toEqual({ name: STARBOY, price_low: 2200, price_high: 3000, summary: "Used $22–30 · new $35", source_count: 2 });
+    expect(searches).toHaveLength(1);
+    expect(searches[0].query).toContain(STARBOY);
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toMatchObject({ model: "nvidia/lightning", json: true });
+    expect(JSON.stringify(chats[0].messages)).toContain("median $27");
+  });
+
+  it("price: cached per name and deduped in flight (one search for all of them)", async () => {
+    let t = 1_000_000;
+    const { search, searches } = fakeSearch({ delayMs: 20 });
+    const look = new LookRunner({ mockMode: false, client: null, search, model: "", log: quiet, ttlMs: 60_000, now: () => t });
+    const results = await Promise.all([look.price({ name: STARBOY }), look.price({ name: STARBOY.toUpperCase() })]);
+    expect(results.map((r) => r.price_low)).toEqual([2200, 2200]);
+    await look.price({ name: "the weeknd starboy 2xLP vinyl" });
+    expect(searches).toHaveLength(1);
+    t += 60_001;
+    await look.price({ name: STARBOY });
+    expect(searches).toHaveLength(2);
+  });
+
+  it("price: a Tavily failure is a LookError (502) and is not cached", async () => {
+    const failing = fakeSearch({ failSearch: true });
+    const look = new LookRunner({ mockMode: false, client: null, search: failing.search, model: "", log: quiet });
+    const { app } = await buildApp({ ...loadConfig(), mockMode: true }, { store: new MemoryStore(), ai: new MockAi(), payments: new MockPayments(), look, logger: false });
+    const r = await inject(app, "/look/price", { name: STARBOY });
+    expect(r.status).toBe(502);
+    expect(r.body.error).toContain("Couldn't price");
+    expect((await inject(app, "/look/price", { name: STARBOY })).status).toBe(502);
+    expect(failing.searches).toHaveLength(2);
+    await app.close();
   });
 });

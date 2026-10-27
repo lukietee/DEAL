@@ -8,7 +8,7 @@ import { listScriptIds } from "./content.js";
 import { Deal, HttpError } from "./deal.js";
 import { LookRunner } from "./look.js";
 import { createPayments, type Payments } from "./payments/index.js";
-import { ResearchRunner } from "./research.js";
+import { ResearchRunner, createSearchAi, researchProvider } from "./research.js";
 import { agreementRoutes } from "./routes/agreements.js";
 import { eventRoutes } from "./routes/events.js";
 import { listingRoutes } from "./routes/listings.js";
@@ -38,15 +38,19 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     (cfg.supabaseUrl && cfg.supabaseServiceRoleKey ? new SupabaseStore(cfg.supabaseUrl, cfg.supabaseServiceRoleKey) : new MemoryStore());
   const ai = deps.ai ?? createAi(cfg, app.log);
   const payments = deps.payments ?? createPayments(cfg.stripeSecretKey);
-  const client = ai.kind === "claude" ? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 }) : null;
+  // Research / Look: Tavily + Nemotron when the Nebius and Tavily keys are set, else Claude web search (researchProvider).
+  const researchVia = ai.kind === "mock" ? "mock" : researchProvider(cfg);
+  const client = researchVia === "claude" ? new Anthropic({ apiKey: cfg.anthropicApiKey, maxRetries: 2 }) : null;
+  const search = researchVia === "nemotron" ? createSearchAi(cfg) : null;
   const research = deps.research ?? new ResearchRunner({
-    mockMode: ai.kind !== "claude",
+    mockMode: researchVia === "mock",
     client,
+    search,
     model: cfg.researchModel,
     cueModel: cfg.cueModel,
     log: app.log,
   });
-  const look = deps.look ?? new LookRunner({ mockMode: ai.kind !== "claude", client, model: cfg.cueModel, log: app.log });
+  const look = deps.look ?? new LookRunner({ mockMode: researchVia === "mock", client, search, model: cfg.cueModel, log: app.log });
   const deal = new Deal(store, ai, payments, cfg, research, look);
 
   app.setErrorHandler((err: unknown, _req, reply) => {
@@ -65,6 +69,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     ai: ai.kind,
     store: store.kind,
     payments: payments.kind,
+    research: research.provider, // "nemotron" = Tavily search + Nemotron synthesis
     provider: ai.kind === "nemotron" ? "nebius" : ai.kind === "claude" ? "anthropic" : null,
     models:
       ai.kind === "nemotron"
