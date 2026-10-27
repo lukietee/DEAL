@@ -17,6 +17,7 @@ import {
   agreementUserPrompt, cueUserPrompt, detectUserPrompt, listingUrlPrompt, summaryUserPrompt,
 } from "./prompts.js";
 import type { ResearchState } from "../research.js";
+import { NemotronAi } from "./nemotron.js";
 
 export interface CueInput {
   session: Session;
@@ -61,22 +62,83 @@ export function researchRange(r: CueResearch | null | undefined): PriceRange | n
   return a ? { low: a.price_low!, high: a.price_high! } : null;
 }
 
-const DetectionSchema = z.object({
+export const DetectionSchema = z.object({
   item: z.string().nullable(),
   category: z.string().nullable().optional(),
   asking_price: z.number().int().nonnegative().nullable().optional(),
   condition_claims: z.array(z.string()).nullable().optional(),
 });
 
-const SummarySchema = z.object({
+export const SummarySchema = z.object({
   outcome: z.enum(["deal", "no_deal", "undecided"]),
   final_price: z.number().int().nonnegative().nullable().optional(),
   headline: z.string().min(1),
   key_points: z.array(z.string()).default([]),
 });
 
+// ---------- shared by the Claude and Nemotron implementations ----------
+
+/** Trim / normalise a model detection. */
+export function finishDetection(out: z.infer<typeof DetectionSchema>): Detection {
+  const item = out.item?.trim() || null;
+  return {
+    item,
+    category: normalizeDetectedCategory(out.category, item ?? ""),
+    asking_price: out.asking_price && out.asking_price > 0 ? out.asking_price : null,
+    condition_claims: (out.condition_claims ?? []).map((c) => c.trim()).filter(Boolean).slice(0, 8),
+  };
+}
+
+/** Deterministic guard-rails on a model agreement: known event ids, items[0] = the session item, total = price + fees. */
+export function guardAgreement(draft: AgreementDraft, session: Session, events: DealEvent[]): AgreementDraft {
+  const ids = new Set(events.map((e) => e.id));
+  draft.source_event_ids = draft.source_event_ids.filter((id) => ids.has(id));
+  const main = itemName(session);
+  if (draft.items[0] !== main) draft.items = [main, ...draft.items.filter((i) => i !== main)];
+  const computed = draft.price + draft.fees.reduce((s, f) => s + f.amount, 0);
+  if (computed !== draft.total) {
+    draft.open_questions.push(`Model total ${formatCents(draft.total)} did not equal price + fees; corrected to ${formatCents(computed)}.`);
+    draft.total = computed;
+  }
+  return draft;
+}
+
+export function listingUserPrompt(input: ListingInput): string {
+  return JSON.stringify({ url: input.url ?? null, pasted_text: input.text ?? null, screenshot_attached: !!input.image_base64 }, null, 1);
+}
+
+export function conditionUserPrompt(listing: Listing, input: ConditionInput): string {
+  return JSON.stringify(
+    { listing: { title: listing.title, condition_claims: listing.condition_claims, description: listing.description, asking_price: listing.asking_price }, buyer_observation: input.observation ?? null, photo_attached: !!input.image_base64 },
+    null,
+    1,
+  );
+}
+
+/** Guard-rail: only claims the listing actually made (model claims mapped back to the listing's wording). */
+export function keepListedClaims(listing: Listing, discrepancies: Discrepancy[]): Discrepancy[] {
+  const claims = new Map(listing.condition_claims.map((c) => [c.trim().toLowerCase(), c]));
+  return discrepancies
+    .map((d) => ({ ...d, claim: claims.get(d.claim.trim().toLowerCase()) ?? d.claim }))
+    .filter((d) => claims.has(d.claim.trim().toLowerCase()));
+}
+
+export function mismatchUserPrompt(m: MismatchDetails, lineItems: LineItem[], timeZone: string): string {
+  return JSON.stringify({
+    reasons: m.reasons,
+    agreed_total: formatCents(m.agreed_total),
+    requested_total: formatCents(m.requested_total),
+    difference: formatCents(m.difference),
+    extra_line_items: m.unmatched_line_items.map((li) => ({ label: li.label, amount: formatCents(li.amount) })),
+    changed_line_items: m.mismatched_amount_line_items.map((li) => ({ label: li.label, amount: formatCents(li.amount) })),
+    requested_line_items: lineItems.map((li) => ({ label: li.label, amount: formatCents(li.amount) })),
+    contradicting_line: m.source_event_text,
+    contradicting_line_time: m.source_event_timestamp ? formatClock(m.source_event_timestamp, timeZone) : null,
+  });
+}
+
 export interface Ai {
-  readonly kind: "mock" | "claude";
+  readonly kind: "mock" | "claude" | "nemotron";
   cue(input: CueInput): Promise<CueExtraction>;
   /** Auto sessions: what is being sold, the asking price and the seller's condition claims, from the transcript so far. */
   detect(session: Session, events: DealEvent[]): Promise<Detection>;
@@ -207,14 +269,7 @@ export class ClaudeAi implements Ai {
 
   async detect(session: Session, events: DealEvent[]): Promise<Detection> {
     try {
-      const out = await this.structured(this.cfg.cueModel, DETECT_SYSTEM, detectUserPrompt(session, events), DetectionSchema, "low");
-      const item = out.item?.trim() || null;
-      return {
-        item,
-        category: normalizeDetectedCategory(out.category, item ?? ""),
-        asking_price: out.asking_price && out.asking_price > 0 ? out.asking_price : null,
-        condition_claims: (out.condition_claims ?? []).map((c) => c.trim()).filter(Boolean).slice(0, 8),
-      };
+      return finishDetection(await this.structured(this.cfg.cueModel, DETECT_SYSTEM, detectUserPrompt(session, events), DetectionSchema, "low"));
     } catch (err) {
       this.log.warn({ err: String(err) }, "detection model failed; using regex detection");
       return this.fallback.detect(session, events);
@@ -235,17 +290,7 @@ export class ClaudeAi implements Ai {
   async agreement(session: Session, events: DealEvent[]): Promise<AgreementDraft> {
     try {
       const draft = await this.structured(this.cfg.agreementModel, AGREEMENT_SYSTEM, agreementUserPrompt(session, events), AgreementDraftSchema, "medium");
-      // Deterministic guard-rails on model output.
-      const ids = new Set(events.map((e) => e.id));
-      draft.source_event_ids = draft.source_event_ids.filter((id) => ids.has(id));
-      const main = itemName(session);
-      if (draft.items[0] !== main) draft.items = [main, ...draft.items.filter((i) => i !== main)];
-      const computed = draft.price + draft.fees.reduce((s, f) => s + f.amount, 0);
-      if (computed !== draft.total) {
-        draft.open_questions.push(`Model total ${formatCents(draft.total)} did not equal price + fees; corrected to ${formatCents(computed)}.`);
-        draft.total = computed;
-      }
-      return draft;
+      return guardAgreement(draft, session, events);
     } catch (err) {
       this.log.warn({ err: String(err) }, "agreement model failed; using mock agreement");
       return this.fallback.agreement(session, events);
@@ -263,8 +308,7 @@ export class ClaudeAi implements Ai {
       listing = await this.parseListingUrl(input.url);
     } else {
       try {
-        const user = JSON.stringify({ url: input.url ?? null, pasted_text: input.text ?? null, screenshot_attached: !!input.image_base64 }, null, 1);
-        listing = await this.structured(this.cfg.agreementModel, LISTING_SYSTEM, withImage(user, input.image_base64), ListingModelSchema, "low");
+        listing = await this.structured(this.cfg.agreementModel, LISTING_SYSTEM, withImage(listingUserPrompt(input), input.image_base64), ListingModelSchema, "low");
       } catch (err) {
         this.log.warn({ err: String(err) }, "listing model failed");
         throw new ListingUnreadableError(LISTING_UNREADABLE, String(err).slice(0, 300));
@@ -335,17 +379,8 @@ export class ClaudeAi implements Ai {
 
   async conditionCheck(listing: Listing, input: ConditionInput): Promise<Discrepancy[]> {
     try {
-      const user = JSON.stringify(
-        { listing: { title: listing.title, condition_claims: listing.condition_claims, description: listing.description, asking_price: listing.asking_price }, buyer_observation: input.observation ?? null, photo_attached: !!input.image_base64 },
-        null,
-        1,
-      );
-      const out = await this.structured(this.cfg.agreementModel, CONDITION_SYSTEM, withImage(user, input.image_base64), ConditionModelSchema, "low");
-      // Guard-rail: only claims the listing actually made.
-      const claims = new Map(listing.condition_claims.map((c) => [c.trim().toLowerCase(), c]));
-      return out.discrepancies
-        .map((d) => ({ ...d, claim: claims.get(d.claim.trim().toLowerCase()) ?? d.claim }))
-        .filter((d) => claims.has(d.claim.trim().toLowerCase()));
+      const out = await this.structured(this.cfg.agreementModel, CONDITION_SYSTEM, withImage(conditionUserPrompt(listing, input), input.image_base64), ConditionModelSchema, "low");
+      return keepListedClaims(listing, out.discrepancies);
     } catch (err) {
       this.log.warn({ err: String(err) }, "condition model failed");
       throw new ConditionCheckError("Condition check failed. Try again, or describe what you see in a few words.");
@@ -354,17 +389,7 @@ export class ClaudeAi implements Ai {
 
   async explainMismatch(m: MismatchDetails, lineItems: LineItem[]): Promise<string> {
     try {
-      const user = JSON.stringify({
-        reasons: m.reasons,
-        agreed_total: formatCents(m.agreed_total),
-        requested_total: formatCents(m.requested_total),
-        difference: formatCents(m.difference),
-        extra_line_items: m.unmatched_line_items.map((li) => ({ label: li.label, amount: formatCents(li.amount) })),
-        changed_line_items: m.mismatched_amount_line_items.map((li) => ({ label: li.label, amount: formatCents(li.amount) })),
-        requested_line_items: lineItems.map((li) => ({ label: li.label, amount: formatCents(li.amount) })),
-        contradicting_line: m.source_event_text,
-        contradicting_line_time: m.source_event_timestamp ? formatClock(m.source_event_timestamp, this.cfg.displayTimeZone) : null,
-      });
+      const user = mismatchUserPrompt(m, lineItems, this.cfg.displayTimeZone);
       const msg = await this.client.messages.create({
         model: this.cfg.agreementModel,
         max_tokens: 1000,
@@ -382,11 +407,18 @@ export class ClaudeAi implements Ai {
   }
 }
 
+/**
+ * Real mode: Nemotron on Nebius Token Factory when NEBIUS_API_KEY is set (unless AI_PROVIDER=claude), with Claude as the
+ * per-call backup when ANTHROPIC_API_KEY is also set; Claude alone when only the Anthropic key is set; otherwise mock.
+ */
 export function createAi(cfg: Config, log: Logger): Ai {
   if (cfg.mockMode) return new MockAi(cfg.displayTimeZone);
-  if (!cfg.anthropicApiKey) {
-    log.warn({}, "MOCK_MODE=false but ANTHROPIC_API_KEY is empty; falling back to mock AI");
-    return new MockAi(cfg.displayTimeZone);
+  const claude = cfg.anthropicApiKey ? new ClaudeAi(cfg, log) : null;
+  if (cfg.nebiusApiKey && cfg.aiProvider !== "claude") return new NemotronAi(cfg, log, { backup: claude });
+  if (claude) {
+    if (cfg.aiProvider === "nebius") log.warn({}, "AI_PROVIDER=nebius but NEBIUS_API_KEY is empty; using Claude");
+    return claude;
   }
-  return new ClaudeAi(cfg, log);
+  log.warn({}, "MOCK_MODE=false but neither NEBIUS_API_KEY nor ANTHROPIC_API_KEY is set (or AI_PROVIDER=claude without a key); falling back to mock AI");
+  return new MockAi(cfg.displayTimeZone);
 }

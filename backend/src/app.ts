@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import Anthropic from "@anthropic-ai/sdk";
 import Fastify, { type FastifyInstance } from "fastify";
 import { createAi, type Ai } from "./ai/index.js";
+import { NemotronAi } from "./ai/nemotron.js";
 import type { Config } from "./config.js";
 import { listScriptIds } from "./content.js";
 import { Deal, HttpError } from "./deal.js";
@@ -64,7 +65,18 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     ai: ai.kind,
     store: store.kind,
     payments: payments.kind,
-    models: ai.kind === "claude" ? { cue: cfg.cueModel, agreement: cfg.agreementModel, research: cfg.researchModel } : null,
+    provider: ai.kind === "nemotron" ? "nebius" : ai.kind === "claude" ? "anthropic" : null,
+    models:
+      ai.kind === "nemotron"
+        ? {
+            cue: cfg.nemotronFastModel, detect: cfg.nemotronFastModel, summary: cfg.nemotronFastModel,
+            agreement: cfg.nemotronReasoningModel, mismatch: cfg.nemotronReasoningModel,
+            listing: cfg.nemotronModel, vision: cfg.nemotronVisionModel,
+            backup: ai instanceof NemotronAi ? (ai.backup?.kind ?? "mock") : null,
+          }
+        : ai.kind === "claude"
+          ? { cue: cfg.cueModel, agreement: cfg.agreementModel, research: cfg.researchModel }
+          : null,
     scripts: listScriptIds(),
     time: new Date().toISOString(),
   }));

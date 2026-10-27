@@ -1,6 +1,6 @@
 // Marketplace listings (POST /listings/parse) and condition checks (POST /sessions/:id/condition-check).
-// ALL money is integer cents. Mock mode serves content/listings/*.json and keyword rules; real mode uses Claude
-// (AGREEMENT_MODEL, vision for screenshots / photos) — see ai/index.ts.
+// ALL money is integer cents. Mock mode serves content/listings/*.json and keyword rules; real mode uses Nemotron
+// (ai/nemotron.ts: vision model for screenshots / photos, pages fetched here) or Claude (ai/index.ts).
 import { z } from "zod";
 import { getListingFile } from "./content.js";
 
@@ -87,6 +87,92 @@ export function decodeImage(b64: string): { data: string; media_type: "image/jpe
         ? "image/webp"
         : "image/jpeg";
   return { data, media_type };
+}
+
+// ---------- server-side page fetch (Nemotron bare-URL import) ----------
+
+/** Obvious internal hosts: never fetch them on a user's behalf. */
+function isPrivateHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal") || h === "::1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
+  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(h);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e: string) => {
+    if (e[0] === "#") {
+      const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : all;
+    }
+    return ENTITIES[e.toLowerCase()] ?? all;
+  });
+}
+
+/**
+ * HTML → compact text for the listing model: the <title>, meta tags (og:*, product:price*, description), JSON-LD blocks
+ * (marketplaces put the price there), then the visible text. Capped at maxChars.
+ */
+export function htmlToText(html: string, maxChars = 20_000): string {
+  const parts: string[] = [];
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
+  if (title) parts.push(`TITLE: ${decodeEntities(title).replace(/\s+/g, " ").trim()}`);
+  for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+    const key = /\b(?:property|name|itemprop)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    const content = /\bcontent\s*=\s*"([^"]*)"|\bcontent\s*=\s*'([^']*)'/i.exec(tag);
+    const value = content?.[1] ?? content?.[2];
+    if (key && value && /^(og:|product:|twitter:(title|description|data)|description$|price)/i.test(key)) parts.push(`META ${key}: ${decodeEntities(value).trim()}`);
+  }
+  for (const m of html.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    parts.push(`JSON-LD: ${m[1]!.replace(/\s+/g, " ").trim().slice(0, 4000)}`);
+  }
+  const body = decodeEntities(
+    html
+      .replace(/<(script|style|noscript|svg|template|head)\b[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<(br|\/p|\/div|\/li|\/h\d|\/tr)\b[^>]*>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/[ \t\f\v\r]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+  if (body) parts.push(`TEXT:\n${body}`);
+  return parts.join("\n").slice(0, maxChars);
+}
+
+/**
+ * Fetch a listing page server-side (Nemotron has no web_fetch tool): http(s) only, no internal hosts, 8 s timeout,
+ * HTML / text only, at most 3 MB read. Returns the page as compact text. Throws Error(reason) on any failure.
+ */
+export async function fetchListingPage(url: string, fetchImpl: typeof fetch = fetch, timeoutMs = 8000): Promise<string> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error("not a valid URL");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error(`unsupported protocol ${u.protocol}`);
+  if (isPrivateHost(u.hostname)) throw new Error("internal host");
+  const res = await fetchImpl(u, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+      accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
+      "accept-language": "en-US,en;q=0.9",
+    },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const type = res.headers.get("content-type") ?? "";
+  if (type && !/text\/html|application\/xhtml|text\/plain/i.test(type)) throw new Error(`not a web page (${type.split(";")[0]})`);
+  const raw = (await res.text()).slice(0, 3_000_000);
+  const text = /<html|<body|<head|<meta/i.test(raw) ? htmlToText(raw) : raw.replace(/\s+/g, " ").trim().slice(0, 20_000);
+  if (text.length < 40) throw new Error("page is empty");
+  return text;
 }
 
 // ---------- mock ----------

@@ -116,6 +116,16 @@ You are given only a link. Use the web_fetch tool to read that exact URL (at mos
 If the page cannot be fetched, is a login wall / sign-in page / captcha, has been removed, or does not show a listing with both a title
 and a price, reply with ONLY {"error": "<short reason>"} instead. Never guess a listing from the URL alone.`;
 
+/** Nemotron bare-URL import: the server fetched the page and passes its text (no tool use). */
+export const LISTING_PAGE_SYSTEM = `${LISTING_SYSTEM}
+You are given a URL and the text of that page, fetched by the server (title, meta tags, structured data, visible text). Extract the listing from it.
+If the page is a login wall / sign-in page / captcha, has been removed, or does not show a listing with both a title and a price,
+reply with ONLY {"error": "<short reason>"} instead. Never guess a listing from the URL alone.`;
+
+export function listingPagePrompt(url: string, pageText: string): string {
+  return `URL: ${url}\n\nPAGE TEXT:\n${pageText}`;
+}
+
 /** The URL must be in the user message: web_fetch only fetches URLs already present in the conversation. */
 export function listingUrlPrompt(url: string): string {
   return `Read the marketplace listing at this URL and return the JSON object.\nURL: ${url}`;
