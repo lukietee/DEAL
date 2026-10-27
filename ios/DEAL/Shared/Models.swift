@@ -1,6 +1,6 @@
 import Foundation
 
-// Mirrors Section 6 / 12.5 of DEAL_Visa_CalHacks_Concept.md and backend/src/types.ts.
+// Mirrors Section 6 / 12.5 of DEAL_Concept.md and backend/src/types.ts.
 // Wire format is snake_case JSON; all money is integer cents.
 // Decoders are deliberately tolerant: missing/null optional fields never fail a decode,
 // unknown enum values decode to `.unknown`, ids may be strings or numbers.

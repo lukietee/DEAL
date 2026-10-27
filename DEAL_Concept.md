@@ -1,12 +1,11 @@
 # DEAL — AI Negotiation Copilot with Agreement-Locked Checkout
 
-**Event:** Cal Hacks — Visa track
 **Builder:** Solo developer working with Claude Code subagents
 **Status:** Concept locked. Building v1 tonight; glasses + Neural Band integration tomorrow.
 
 > **▶ RESUMING WORK? Start at [Section 12: Build Handoff](#12-build-handoff-for-subagents).**
 > It has the current status, setup checklist, folder layout, API spec, environment variables, and copy-paste prompts for each subagent.
-> To resume in Claude Code, say: *"Read DEAL_Visa_CalHacks_Concept.md, check the Section 12 status and setup checklist, then spawn the subagents for the next phase."*
+> To resume in Claude Code, say: *"Read DEAL_Concept.md, check the Section 12 status and setup checklist, then spawn the subagents for the next phase."*
 
 ---
 
@@ -235,7 +234,7 @@ Most shopping AI helps you *find* or *buy* things. DEAL protects the moments tha
 
 **Priorities, ranked:**
 1. **Agreement-locked payment (essential).** If Visa's sandbox supports spending limits or merchant restrictions on a credential, tie them to the agreement. If not, enforce in the backend before the payment request is sent, and pitch the Visa-native version as the roadmap.
-2. **Use Visa's own tools (high value).** Use Visa's developer sandbox if Cal Hacks provides access; otherwise Stripe test mode with Visa test cards. **Ask Visa mentors which APIs they want to see used.**
+2. **Use Visa's own tools (high value).** Use Visa's developer sandbox if access is available; otherwise Stripe test mode with Visa test cards.
 3. **Dispute evidence pack (differentiator).** Shows understanding of Visa's side of the business: disputes cost merchants and the network money. For meetups it also includes the listing and the condition discrepancies ("listing said new tires last month; tires were worn").
 4. **Two-sided confirmation (trust).** Makes the agreement credible to merchants and answers "why would a seller use this?"
 5. **Personalization (expected).** Covered by budget/target/style.
@@ -450,7 +449,7 @@ The backend and content work does **not** need Xcode or API keys: start them fir
 
 ```text
 Negotiator/
-├── DEAL_Visa_CalHacks_Concept.md   # this doc: source of truth
+├── DEAL_Concept.md   # this doc: source of truth
 ├── backend/                        # Node.js + TypeScript (Fastify)
 │   ├── src/
 │   │   ├── server.ts               # Fastify app + routes
@@ -561,7 +560,7 @@ Each agent should read this whole document first and treat Sections 3, 4, 6, and
 ---
 
 **Content agent**
-> Read `DEAL_Visa_CalHacks_Concept.md` (especially Sections 3, 6, 7, 12). Create everything in `content/`:
+> Read `DEAL_Concept.md` (especially Sections 3, 6, 7, 12). Create everything in `content/`:
 > 1. `content/scripts/car_accord.json`: the flagship demo conversation following Section 7 exactly (asking $38,000, target $34,500, monthly-payment tactic, lands at $34,600, both sides agree). 20–30 lines, each `{speaker, text, delay_ms}`. Also include, for each line, the expected extraction in the Section 6 "Live cue" JSON shape so the backend can use it in mock mode.
 > 2. `content/scripts/pawn_guitar.json`: a shorter pawn shop purchase (buyer buying a used guitar), same format.
 > 3. `content/scripts/seller_extra_fee.json`: the post-agreement line items the seller tries to add (the $1,200 protection package) and the corrected request.
@@ -572,7 +571,7 @@ Each agent should read this whole document first and treat Sections 3, 4, 6, and
 ---
 
 **Backend agent**
-> Read `DEAL_Visa_CalHacks_Concept.md` (especially Sections 6 and 12). Build `backend/` (Node 24, TypeScript, Fastify, zod, vitest) and `supabase/schema.sql` exactly per Sections 12.3–12.6.
+> Read `DEAL_Concept.md` (especially Sections 6 and 12). Build `backend/` (Node 24, TypeScript, Fastify, zod, vitest) and `supabase/schema.sql` exactly per Sections 12.3–12.6.
 > - Implement every endpoint in 12.5. Money in integer cents.
 > - `MOCK_MODE=true` must work with **no API keys**: use `content/scripts/*.json` expected extractions instead of Claude, an in-memory store instead of Supabase when `SUPABASE_URL` is empty, and a fake receipt instead of Stripe when `STRIPE_SECRET_KEY` is empty.
 > - Real mode: Claude via the official `@anthropic-ai/sdk` (`CUE_MODEL` for live cues, `AGREEMENT_MODEL` for agreement + mismatch explanation), validate all model output with zod and retry once on invalid JSON; Supabase via `@supabase/supabase-js` with the service-role key; Stripe test mode PaymentIntent with `pm_card_visa`.
@@ -584,7 +583,7 @@ Each agent should read this whole document first and treat Sections 3, 4, 6, and
 ---
 
 **iOS agent** (after Xcode is installed)
-> Read `DEAL_Visa_CalHacks_Concept.md` (Sections 3, 4 "Screens", 6, 12). Build the SwiftUI app in `ios/` using **XcodeGen** (`ios/project.yml`, iOS 17+ target, bundle id `com.lucas.deal`). Use the Supabase Swift SDK for Realtime reads only; all writes go through the backend API in 12.5.
+> Read `DEAL_Concept.md` (Sections 3, 4 "Screens", 6, 12). Build the SwiftUI app in `ios/` using **XcodeGen** (`ios/project.yml`, iOS 17+ target, bundle id `com.lucas.deal`). Use the Supabase Swift SDK for Realtime reads only; all writes go through the backend API in 12.5.
 > - Build tonight's screens from the "Screen schedule": mode picker, B2, B3 (with Scripted mode toggle calling `/script/play`), B4, B5, B6, S1–S5. Match the ASCII layouts.
 > - Shared models must match Section 6 / 12.5 (money in integer cents, formatted as dollars in the UI).
 > - Put backend URL and Supabase anon key in a config file per 12.4; no secret keys in the app.
@@ -596,12 +595,12 @@ Each agent should read this whole document first and treat Sections 3, 4, 6, and
 ---
 
 **Glasses agent** (tomorrow)
-> Read `DEAL_Visa_CalHacks_Concept.md` (Sections 4, 9, 12). Research the current Meta wearables SDK for iOS and whether a third-party app can write to the Ray-Ban Meta Display. Report findings **before** writing code. If supported, implement `MetaGlassesDisplay` conforming to the existing `GlassesDisplay` protocol: show the cue (3–6 words), status color, and current offer vs target; update only when the cue changes. Add a laptop mirror view (simple web page or macOS window fed by the same events) for the projector. If unsupported, report options from Section 9's fallback column.
+> Read `DEAL_Concept.md` (Sections 4, 9, 12). Research the current Meta wearables SDK for iOS and whether a third-party app can write to the Ray-Ban Meta Display. Report findings **before** writing code. If supported, implement `MetaGlassesDisplay` conforming to the existing `GlassesDisplay` protocol: show the cue (3–6 words), status color, and current offer vs target; update only when the cue changes. Add a laptop mirror view (simple web page or macOS window fed by the same events) for the projector. If unsupported, report options from Section 9's fallback column.
 
 ### 12.8 Open Questions
 
 - Which API keys does Lucas already have?
-- Does Cal Hacks provide Visa developer sandbox access? Ask Visa mentors which APIs they want to see.
+- Can we get Visa developer sandbox access, and which Visa APIs are most worth using?
 - iPhone iOS version (must be supported by the installed Xcode).
 - Second iPhone available for the seller side at demo time, or Simulator only?
 - Does the Meta SDK support display output from third-party apps? (Glasses agent finds out tomorrow.)

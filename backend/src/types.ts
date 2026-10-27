@@ -1,4 +1,4 @@
-// Shared data model. Mirrors Section 6 / 12.5 of DEAL_Visa_CalHacks_Concept.md.
+// Shared data model. Mirrors Section 6 / 12.5 of DEAL_Concept.md.
 // ALL money values are integer cents (3460000 = $34,600.00).
 import type { ConditionCheck, Listing } from "./listing.js";
 export type { ConditionCheck, Discrepancy, Listing } from "./listing.js";

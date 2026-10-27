@@ -1,6 +1,6 @@
 # DEAL backend
 
-Node 24 + TypeScript + Fastify. It holds every API key and runs the AI cues, agreement drafting, SHA-256 fingerprinting, the deterministic mismatch check and Stripe test payments. The contract is Section 12.5 of `../DEAL_Visa_CalHacks_Concept.md`. **All money is integer cents.**
+Node 24 + TypeScript + Fastify. It holds every API key and runs the AI cues, agreement drafting, SHA-256 fingerprinting, the deterministic mismatch check and Stripe test payments. The contract is Section 12.5 of `../DEAL_Concept.md`. **All money is integer cents.**
 
 ## Run (mock mode, no keys)
 
