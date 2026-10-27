@@ -1,6 +1,7 @@
 // The Ai interface on NVIDIA Nemotron via Nebius Token Factory (src/nebius.ts). Same prompts, zod schemas and
 // validate-and-retry-once pattern as the Claude implementation; each call is routed to the Nemotron model that fits it:
-//   fast (Lightning)     live cues + speaker, product detection, session summary   (per line, must stay ~1 s)
+//   cue (Ultra, no thinking)  live cues + speaker                               (per line, ~0.9 s; Lightning mis-scaled money)
+//   fast (Lightning)     product detection, session summary                          (background, ~0.6 s)
 //   reasoning (Ultra)    agreement draft (thinking on), mismatch sentence           (money that gets locked)
 //   general (Super)      listing parse from pasted text or a fetched page
 //   vision (Super VL)    listing screenshots, condition-check photos
@@ -23,7 +24,7 @@ import {
   listingUserPrompt, mismatchUserPrompt, type Ai, type CueInput,
 } from "./index.js";
 import {
-  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, DETECT_SYSTEM, LISTING_PAGE_SYSTEM, LISTING_SYSTEM, MISMATCH_SYSTEM, SUMMARY_SYSTEM,
+  AGREEMENT_SYSTEM, CONDITION_SYSTEM, CUE_SYSTEM, DETECT_SYSTEM, LISTING_PAGE_SYSTEM, LISTING_SYSTEM, MISMATCH_SYSTEM, NEMOTRON_CUE_NOTES, SUMMARY_SYSTEM,
   agreementUserPrompt, cueUserPrompt, detectUserPrompt, listingPagePrompt, summaryUserPrompt,
 } from "./prompts.js";
 
@@ -52,6 +53,21 @@ export function nemotronUserContent(text: string, imageBase64?: string): Nemotro
 /** Drop a leaked <think>…</think> block (thinking output should arrive separately, but never parse it as the answer). */
 export function stripThinking(text: string): string {
   return text.replace(/<think>[\s\S]*?(<\/think>|$)/gi, "").trim();
+}
+
+/**
+ * Deterministic guard on cue money: a value more than 20× the session's reference price that is still plausible after
+ * dividing by 100 was cents converted twice ($475 → 4750000). Fixes current_offer and new_terms amounts.
+ */
+export function fixCentsScale(out: CueExtraction, session: Session): CueExtraction {
+  const ref = session.asking_price ?? session.target_price ?? session.max_budget ?? session.current_offer;
+  if (!ref) return out;
+  const fix = <T extends number | null>(v: T): T => (v != null && v > ref * 20 && v % 100 === 0 && v / 100 <= ref * 20 ? (v / 100) as T : v);
+  return {
+    ...out,
+    current_offer: fix(out.current_offer),
+    new_terms: out.new_terms.map((t) => ({ ...t, amount: fix(t.amount) })),
+  };
 }
 
 const ListingPageSchema = z.union([z.object({ error: z.string().min(1) }), ListingModelSchema]);
@@ -116,7 +132,10 @@ export class NemotronAi implements Ai {
   async cue(input: CueInput): Promise<CueExtraction> {
     return this.withBackup("cue", async () => {
       const user = cueUserPrompt(input.session, input.recent, { speaker: input.speaker, text: input.text }, getTactics(), input.research ?? null);
-      const out = await this.structured(this.cfg.nemotronFastModel, CUE_SYSTEM, user, CueExtractionSchema, CALLS.cue);
+      const out = fixCentsScale(await this.structured(this.cfg.nemotronCueModel, CUE_SYSTEM + NEMOTRON_CUE_NOTES, user, CueExtractionSchema, CALLS.cue), input.session);
+      // Guard: never a calm colour while the standing offer is above the buyer's max (the prompt's own red rule).
+      const max = input.session.max_budget;
+      if (max != null && out.current_offer != null && out.current_offer > max) out.status = "red";
       if (input.speaker !== "auto") return { ...out, speaker: undefined };
       return { ...out, speaker: out.speaker ?? guessSpeaker(input.text, input.recent) };
     }, (ai) => ai.cue(input));

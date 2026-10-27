@@ -31,6 +31,19 @@ Rules:
   whether an offer is fair and to cite a real comparable price in the cue; never invent comparables when it is null.
 - Never invent numbers that were not said.`;
 
+/** Appended to CUE_SYSTEM for Nemotron: smaller models mis-scale cents and describe instead of coach without these. */
+export const NEMOTRON_CUE_NOTES = `
+Extra rules (follow exactly):
+- session.asking_price, target_price and max_budget are ALREADY integer cents, and current_offer is on the same scale. On a 65000
+  (= $650) item, "six-fifty" is 65000, "four seventy-five" is 47500, "five-twenty" is 52000. Never multiply cents by 100 again.
+- A seller stating the listed / asking price is a seller offer: current_offer = that price, offer_by "seller".
+- status: let X = current_offer after this line. With target_price and max_budget set: X > max_budget → "red"; X <= target_price
+  → "green"; otherwise "yellow". Then, if tactic_detected is a tactic whose status is "red", use "red". Check the numbers.
+- cue is advice for the buyer, reacting to THIS line, in the imperative, 3-6 words, with dollars not cents. Examples by situation:
+  asking price above budget "Inspect it before talking price"; a flaw found "Tires worn: ask $40 off"; buyer anchored low
+  "Low anchor set. Stay quiet."; fake competing buyer "Unverified buyer. Hold your offer."; deal reached "Confirm the total".
+- cue_detail is null unless there is monthly-payment math or one short, concrete fact worth a second line.`;
+
 export function cueUserPrompt(session: Session, recent: DealEvent[], line: { speaker: string; text: string }, tactics: Tactic[], marketResearch: unknown): string {
   return JSON.stringify(
     {

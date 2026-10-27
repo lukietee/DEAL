@@ -74,7 +74,7 @@ export async function buildApp(cfg: Config, deps: AppDeps = {}): Promise<{ app: 
     models:
       ai.kind === "nemotron"
         ? {
-            cue: cfg.nemotronFastModel, detect: cfg.nemotronFastModel, summary: cfg.nemotronFastModel,
+            cue: cfg.nemotronCueModel, detect: cfg.nemotronFastModel, summary: cfg.nemotronFastModel,
             agreement: cfg.nemotronReasoningModel, mismatch: cfg.nemotronReasoningModel,
             listing: cfg.nemotronModel, vision: cfg.nemotronVisionModel,
             backup: ai instanceof NemotronAi ? (ai.backup?.kind ?? "mock") : null,

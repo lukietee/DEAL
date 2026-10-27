@@ -33,7 +33,9 @@ export function loadConfig() {
     nebiusApiKey: secret("NEBIUS_API_KEY"),
     nebiusBaseUrl: process.env.NEBIUS_BASE_URL?.trim() || "https://api.tokenfactory.nebius.com/v1",
     aiProvider: (process.env.AI_PROVIDER?.trim().toLowerCase() || "") as "" | "nebius" | "claude",
-    nemotronFastModel: process.env.NEMOTRON_FAST_MODEL?.trim() || "nvidia/Nemotron-3_5-Lightning", // per-line cues, phrases, detection
+    nemotronFastModel: process.env.NEMOTRON_FAST_MODEL?.trim() || "nvidia/Nemotron-3_5-Lightning", // phrases, detection, summary
+    // Live cues: Ultra with thinking off answers in ~0.9 s and gets offers / colours right far more often than Lightning.
+    nemotronCueModel: process.env.NEMOTRON_CUE_MODEL?.trim() || "nvidia/Nemotron-3-Ultra-550b-a55b",
     nemotronModel: process.env.NEMOTRON_MODEL?.trim() || "nvidia/nemotron-3-super-120b-a12b", // research summaries, listing parse
     nemotronReasoningModel: process.env.NEMOTRON_REASONING_MODEL?.trim() || "nvidia/Nemotron-3-Ultra-550b-a55b", // agreement drafting
     nemotronVisionModel: process.env.NEMOTRON_VISION_MODEL?.trim() || "nvidia/Nemotron-3.5-Super-VL", // Look identify, condition photos

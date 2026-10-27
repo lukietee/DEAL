@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { ClaudeAi, MockAi, createAi, type Ai } from "../src/ai/index.js";
-import { NemotronAi, stripThinking } from "../src/ai/nemotron.js";
+import { NemotronAi, fixCentsScale, stripThinking } from "../src/ai/nemotron.js";
 import { URL_UNREADABLE, htmlToText } from "../src/listing.js";
 import type { NemotronRequest, NemotronResponse } from "../src/nebius.js";
 import { MockPayments } from "../src/payments/index.js";
@@ -77,21 +77,21 @@ describe("provider selection (createAi)", () => {
     const h = (await app.inject({ method: "GET", url: "/health" })).json();
     expect(h).toMatchObject({ ai: "nemotron", provider: "nebius" });
     expect(h.models).toMatchObject({
-      cue: baseCfg.nemotronFastModel, agreement: baseCfg.nemotronReasoningModel, listing: baseCfg.nemotronModel, vision: baseCfg.nemotronVisionModel, backup: "mock",
+      cue: baseCfg.nemotronCueModel, detect: baseCfg.nemotronFastModel, agreement: baseCfg.nemotronReasoningModel, listing: baseCfg.nemotronModel, vision: baseCfg.nemotronVisionModel, backup: "mock",
     });
     await app.close();
   });
 });
 
 describe("Nemotron calls (fake Token Factory client)", () => {
-  it("cue: fast model, JSON mode, no thinking; JSON wrapped in prose and fences is parsed", async () => {
+  it("cue: cue model, JSON mode, no thinking; JSON wrapped in prose and fences is parsed", async () => {
     const { client, calls } = fakeNemotron([`Sure! Here it is:\n\`\`\`json\n${JSON.stringify(CUE)}\n\`\`\``]);
     const app = await nemoApp(new NemotronAi(baseCfg, quiet, { client }));
     const s = await post(app, "/sessions", SESSION);
     const e = await post(app, `/sessions/${s.body.id}/events`, { speaker: "buyer", text: "Would you do four fifty?" });
     expect(e.status).toBe(201);
     expect(e.body).toMatchObject({ cue: "Strong anchor, hold firm", status_color: "green" });
-    expect(calls[0]).toMatchObject({ model: baseCfg.nemotronFastModel, json: true, thinking: false });
+    expect(calls[0]).toMatchObject({ model: baseCfg.nemotronCueModel, json: true, thinking: false });
     expect(calls[0]!.messages[0]).toMatchObject({ role: "system" });
     await app.close();
   });
@@ -118,6 +118,15 @@ describe("Nemotron calls (fake Token Factory client)", () => {
     const e = await post(app, `/sessions/${s.body.id}/events`, { speaker: "buyer", text: "Hi, is this still available?" });
     expect(e.status).toBe(201);
     expect(used).toBe(1);
+    await app.close();
+  });
+
+  it("cue guards: double-converted cents are scaled back, and an offer above max is red", async () => {
+    const { client } = fakeNemotron([JSON.stringify({ ...CUE, current_offer: 6000000, offer_by: "seller", new_terms: [{ type: "price", label: "bike", amount: 6000000 }], status: "yellow" })]);
+    const app = await nemoApp(new NemotronAi(baseCfg, quiet, { client }));
+    const s = await post(app, "/sessions", SESSION);
+    const e = await post(app, `/sessions/${s.body.id}/events`, { speaker: "seller", text: "I could do six hundred." });
+    expect(e.body).toMatchObject({ extracted_offer: 60000, status_color: "red" });
     await app.close();
   });
 
@@ -234,6 +243,12 @@ describe("helpers", () => {
     expect(t).toContain("META description: Nice");
     expect(t).toContain("Hello world");
     expect(t).not.toContain("bad()");
+  });
+  it("fixCentsScale leaves plausible amounts alone", () => {
+    const session = { asking_price: 65000, target_price: null, max_budget: null, current_offer: null } as any;
+    const out = { ...CUE, current_offer: 52000, new_terms: [{ type: "fee", label: "gas", amount: 2000 }] } as any;
+    expect(fixCentsScale(out, session)).toEqual(out);
+    expect(fixCentsScale({ ...out, current_offer: 5200000 }, session).current_offer).toBe(52000);
   });
   it("stripThinking drops a leaked think block", () => {
     expect(stripThinking('<think>hmm {"a":1}</think>{"b":2}')).toBe('{"b":2}');
