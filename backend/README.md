@@ -61,15 +61,43 @@ Content comes from `../content` at runtime (override with `CONTENT_DIR`). No pla
 | `GET /sessions/:id/dispute-pack` | | JSON evidence pack |
 | `POST /listings/parse` *(marketplace)* | `{url?, text?, image_base64?}` (at least one) | `Listing` (200). See below |
 | `POST /sessions/:id/condition-check` *(marketplace)* | `{observation?, image_base64?}` (at least one) | `{discrepancies: Discrepancy[], event: Event}` (201). 409 if the session has no `listing`. Real mode: 502 `{error}` if the model fails |
-| `POST /research/preview` *(added, B2 market check)* | `{item, category?, asking_price?}` (`asking_price` in cents; `category` defaults to `marketplace`) | `{summary: string\|null, price_low: number\|null, price_high: number\|null, sources: [{title, url, price, note, image_url}]}` (cents). Blocking. Real mode runs one "comparable listings" web-search agent plus og:image lookups (~15–25 s); a failed agent returns nulls. Mock mode returns `content/comparables/<category>.json` in this shape after ~1.5 s |
-| `POST /look/identify` *(added, Look mode)* | `{image_base64, hint?}` (JPEG crop from the glasses, ≤ 768 px; a `data:` prefix is fine) | `{is_product: bool, name: string\|null, category: string\|null, confidence: 0…1}`. Real mode: one `CUE_MODEL` vision call (~1–2 s), zod-validated with one retry; strict about `is_product` (people, hands, walls, generic furniture, screens and blurry frames are `false`, and so is anything it can only name generically); 502 `{error}` if the model fails. Mock mode always returns The Weeknd – Starboy (2×LP vinyl), `category: "vinyl"`, `confidence: 0.92` |
-| `POST /look/price` *(added, Look mode)* | `{name, category?}` | `{name, price_low: number\|null, price_high: number\|null, summary, source_count}` (cents; `summary` is one short line like `"Used $22–30 · new $35"`). Real mode: `CUE_MODEL` with at most 2 web searches, no page fetches (~4–5 s); 502 `{error}` on failure. Cached in memory per normalized name for 30 min (failures aren't cached), and concurrent requests for the same name share one call. Mock mode: Starboy is $25–35 used, other names get a stable demo range, after ~0.3 s |
+| `POST /research/preview` *(added, B2 market check)* | `{item, category?, asking_price?}` (`asking_price` in cents; `category` defaults to `marketplace`) | `{summary: string\|null, price_low: number\|null, price_high: number\|null, sources: [{title, url, price, note, image_url}]}` (cents). Blocking. Real mode runs the "comparable listings" research agent (3 Tavily searches + one Nemotron synthesis, ~3.5 s; ~15–25 s on the Claude fallback) plus og:image lookups; a failed agent returns nulls and any search hits. Mock mode returns `content/comparables/<category>.json` in this shape after ~1.5 s |
+| `POST /look/identify` *(added, Look mode)* | `{image_base64, hint?}` (JPEG crop from the glasses, ≤ 768 px; a `data:` prefix is fine) | `{is_product: bool, name: string\|null, category: string\|null, confidence: 0…1}`. Real mode: one `NEMOTRON_VISION_MODEL` call (~1.5 s; `CUE_MODEL` on the Claude fallback), zod-validated with one retry; strict about `is_product` (people, hands, walls, generic furniture, screens and blurry frames are `false`, and so is anything it can only name generically); 502 `{error}` if the model fails. Mock mode always returns The Weeknd – Starboy (2×LP vinyl), `category: "vinyl"`, `confidence: 0.92` |
+| `POST /look/price` *(added, Look mode)* | `{name, category?}` | `{name, price_low: number\|null, price_high: number\|null, summary, source_count}` (cents; `summary` is one short line like `"Used $22–30 · new $35"`). Real mode: one Tavily search, then `NEMOTRON_FAST_MODEL` reads the snippets (~1–3 s; Claude fallback: `CUE_MODEL` with at most 2 web searches, ~4–5 s); 502 `{error}` on failure. Cached in memory per normalized name for 30 min (failures aren't cached), and concurrent requests for the same name share one call. Mock mode: Starboy is $25–35 used, other names get a stable demo range, after ~0.3 s |
 | `GET /comparables/:category` *(added)* | | `content/comparables/<category>.json` |
 | `GET /scripts` *(added)* | | `{scripts: ["car_accord", "marketplace_bike", "pawn_guitar"]}` |
 
 `Event` has a new field `kind`: `"speech"` for transcript lines, or `"condition_check"` for the event a condition check inserts. The request body limit is 12 MB, so base64 photos fit. Downscale on the phone first, because Claude takes at most 5 MB per image.
 
 Errors are `{error, details?}` with status 400 (validation), 404, 409 (state conflict), 422 (real mode: listing couldn't be read) or 502 (real mode: condition model failed).
+
+### Live research, suggested phrases and Look: Tavily + Nemotron (`src/research.ts`, `src/look.ts`)
+
+Real mode picks the provider with the same rule as the core AI (`researchProvider`; `GET /health` → `research`):
+`nemotron` when `NEBIUS_API_KEY` and `TAVILY_API_KEY` are set unless `AI_PROVIDER=claude`, else `claude` when
+`ANTHROPIC_API_KEY` is set, else `mock`. A mock core AI keeps research on mock.
+
+- **Research agents** (`GET /sessions/:id` → `research.agents`). When the item is known, three agents run in parallel:
+  comparable listings, known issues & wear, fair price & leverage. Each one:
+  1. plans 2–3 templated queries from the item name (comps 3, issues 2, price 2), e.g. `"Trek Domane AL 2 road bike sold listings eBay"`;
+  2. runs them on **Tavily** in parallel (`search_depth: advanced` for comps and price, whose snippets carry the prices;
+     `basic` for issues; comps also asks for `include_images`). `status` goes `searching` → `reading` as results land,
+     `queries` and `sources` fill live, `activity` says what it's doing;
+  3. sends the top 10 deduped results (by Tavily score) to one **`NEMOTRON_MODEL`** call (JSON mode, thinking off), which writes
+     `summary`, `headline` (≤ 24 chars for the glasses strip; `agentHeadline` falls back to the price range or the summary),
+     `price_low` / `price_high` and per-source `price` / `note`. Same zod schema as the Claude path, retried once on invalid JSON.
+     Sources the model names that Tavily didn't return are dropped;
+  4. fills thumbnails from the pages' og:image (fetched while the model writes), else from Tavily's images (comps).
+
+  Measured: all three done in ~3.5–7 s (Claude + web_search took 15–25 s). Credits per session: comps 6 + issues 2 + price 4 = 12.
+  A failing agent (every search failed, or the model failed twice) ends in `status: "error"`; the others carry on.
+- **Suggested phrases** (`GET /sessions/:id` → `suggestions`) after every line: `NEMOTRON_FAST_MODEL` in JSON mode (~0.7 s),
+  grounded in the finished agents' summaries; template phrases if the model fails.
+- **Look mode.** Identify: `NEMOTRON_VISION_MODEL` with the strict `is_product` prompt (no JSON mode: the VL model answers ~2× faster
+  without it). Price: one Tavily search (`"<name> price used sold"`, advanced, 2 credits), then `NEMOTRON_FAST_MODEL` reads the snippets;
+  `source_count` is capped by the results. Cache and in-flight dedupe are unchanged, so a cached name costs no credits.
+
+The Claude path (`client`) is unchanged and stays the fallback. Mock mode is unchanged and deterministic.
 
 ### Auto sessions: "Start listening" with no setup (`src/auto.ts`)
 

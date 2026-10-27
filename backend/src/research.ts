@@ -4,7 +4,7 @@
 // fair price / negotiation leverage). Real mode has two providers (see researchProvider):
 //   - Nemotron (NEBIUS_API_KEY + TAVILY_API_KEY): each agent runs 2-3 templated Tavily searches in parallel,
 //     then one NEMOTRON_MODEL call turns the snippets into summary / headline / price range / per-source notes.
-//     All three agents finish in ~3-5 s.
+//     All three agents finish in ~3.5-7 s.
 //   - Claude (fallback): each agent is a Claude call with the server-side web_search tool, streamed (~15-25 s).
 // Both fill the same agent fields live (status, activity, queries, sources) so the phone and the glasses
 // animate, then fetch the og:image of the top result pages so the app can show pictures. In mock mode the
@@ -389,7 +389,9 @@ export async function runNemotronAgent(ai: SearchAi, spec: AgentSpec, agent: Res
   results.sort((a, b) => b.score - a.score);
   const top = results.slice(0, MAX_RESULTS);
   agent.sources = results.map((r) => ({ title: r.title || r.url, url: r.url, price: null, note: null, image_url: null }));
+  // Thumbnails load while the model writes: og:images of the top pages, plus the search's own item photos.
   const pageImages = new Map(top.slice(0, 5).map((r) => [r.url, fetchPageImage(r.url, 2500)] as const));
+  const searchImages = Promise.all(images.slice(0, 4).map(async (u) => ((await isImage(u, 2500)) ? u : null)));
 
   agent.activity = "Writing summary";
   const prompt = [
@@ -398,6 +400,7 @@ export async function runNemotronAgent(ai: SearchAi, spec: AgentSpec, agent: Res
     top.length ? `Web search results (Tavily):\n\n${resultsBlock(top)}` : `The web search found nothing.`,
     ``,
     `Use ONLY these results; never invent a source, URL or price. If they hold no usable prices, use null.`,
+    ...(spec.id === "issues" ? [`price_low / price_high are the item's market value, not repair costs: use null for both here; put repair costs in the notes.`] : []),
     `Reply with ONLY a JSON object:`,
     ...OUTPUT_SPEC,
   ].join("\n");
@@ -407,14 +410,8 @@ export async function runNemotronAgent(ai: SearchAi, spec: AgentSpec, agent: Res
   agent.activity = "Pulling images";
   await Promise.all(agent.sources.slice(0, 4).map(async (s) => { s.image_url = (await pageImages.get(s.url)) ?? null; }));
   // Pages without an og:image get the search's own item photos (comps only), checked like og:images.
-  const spare = images.filter((u) => !agent.sources.some((s) => s.image_url === u));
-  for (const s of agent.sources.slice(0, 4)) {
-    if (s.image_url) continue;
-    let url: string | undefined;
-    while ((url = spare.shift()) && !(await isImage(url, 2500)));
-    if (!url) break;
-    s.image_url = url;
-  }
+  const spare = (await searchImages).filter((u): u is string => !!u && !agent.sources.some((s) => s.image_url === u));
+  for (const s of agent.sources.slice(0, 4)) if (!s.image_url && spare.length) s.image_url = spare.shift()!;
   agent.status = "done";
   agent.activity = `${agent.queries.length} searches · ${agent.sources.length} sources`;
   agent.finished_at = now();

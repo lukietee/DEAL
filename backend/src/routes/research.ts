@@ -11,7 +11,7 @@ const ResearchPreview = z.object({
 });
 
 export function researchRoutes(app: FastifyInstance, deal: Deal) {
-  // Blocking: real mode takes ~15-25 s (one web-search agent + og:images); mock mode ~1.5 s.
+  // Blocking: real mode takes ~3-4 s on Tavily + Nemotron (~15-25 s on the Claude fallback) plus og:images; mock mode ~1.5 s.
   // Returns {summary, price_low, price_high, sources: [{title, url, price, note, image_url}]}.
   app.post("/research/preview", async (req) => deal.researchPreview(parseBody(ResearchPreview, req.body)));
 }
