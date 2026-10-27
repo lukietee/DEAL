@@ -448,7 +448,7 @@ The backend and content work does **not** need Xcode or API keys: start them fir
 ### 12.3 Folder Layout
 
 ```text
-Negotiator/
+DEAL/
 ├── DEAL_Concept.md   # this doc: source of truth
 ├── backend/                        # Node.js + TypeScript (Fastify)
 │   ├── src/
