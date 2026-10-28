@@ -147,7 +147,7 @@ DEAL first ran on Anthropic's Claude (Haiku for live cues, Sonnet for the agreem
 
 - Trade-offs. Out of the box, Nemotron needed more explicit instructions than Claude for the money scale and the status-colour rule, and occasionally leaked its reasoning block into the output, which I strip before parsing. Thinking mode is slow (~5.5 s for the agreement), so I only use it there.
 
-- Cost and control. Token Factory's OpenAI-compatible API made switching easy: one plain fetch client, per-call model choice through environment variables, and a /health endpoint that shows which model handles each call.
+- Ease of switching. Token Factory's OpenAI-compatible API made switching easy: one plain fetch client, per-call model choice through environment variables, and a /health endpoint that shows which model handles each call.
 
 Overall, Nemotron let me run every AI call in DEAL on open models while making the live experience faster than my original setup.
 ```
