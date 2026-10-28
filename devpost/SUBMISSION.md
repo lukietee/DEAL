@@ -116,6 +116,42 @@ I use four NVIDIA Nemotron models through Nebius Token Factory, each matched to 
 In short: Ultra where a mistake costs the user money, Lightning where speed matters and the task is easy, Super for reading lots of web text, and VL for images. Every output is validated against a schema and retried once if invalid.
 ```
 
+## Did you fine-tune, prompt-engineer, or use Nemotron out of the box? What was your approach?
+
+```
+No fine-tuning. I used the Nemotron models as hosted on Nebius Token Factory and did the work with prompt engineering, per-call model selection and deterministic code around the model.
+
+1. Measure first. I built a scripted bike negotiation (19 lines) with the correct cue, offer amount and status colour for every line, and scored each model against it. That test drove every decision below.
+
+2. Prompts and structured output. Every call has its own system prompt and asks for JSON (JSON mode), which is checked against a zod schema; if it doesn't validate, the call is retried once. A leaked <think> block is stripped and stray prose or code fences are tolerated before parsing.
+
+3. Nemotron-specific prompt notes for the live cue. The test showed where the model slipped, so the cue prompt got extra notes: the money scale (cents) with worked examples, "the asking price counts as the seller's first offer", the red/yellow/green status rule spelled out, and examples of short imperative cues ("Hold the tire point").
+
+4. Deterministic guards after the model. Some mistakes are cheaper to catch in code than in a prompt. If a cue's amount is more than 20× the deal's price and makes sense divided by 100, it was converted from cents twice and gets scaled back. An offer above the buyer's max budget is always shown red, whatever the model says. The agreement draft is also checked against the session before it can be locked.
+
+5. Reasoning only where it pays. I switch thinking off (chat_template_kwargs.enable_thinking=false) for every live call and on only for the agreement draft. That keeps Ultra at about 1 s for cues and spends ~4 extra seconds only on the output that gets paid.
+
+6. Grounding. The cue model sees the live research (each agent's summary, price range and top sources), and the research model may only cite sources Tavily actually returned; any URL it invents is dropped. For Look mode, the vision prompt is strict about what counts as a product (no people, hands, walls or screens), and I skip JSON mode there because the VL model answers about twice as fast without it.
+
+Result: Ultra went from unreliable on money to 18 of 19 offer amounts correct at about 1 s median, with no training at all.
+```
+
+## How did Nemotron's performance compare to other models you've used for similar tasks?
+
+```
+DEAL first ran on Anthropic's Claude (Haiku for live cues, Sonnet for the agreement and vision, Opus with web search for research), so I could compare the same prompts and schemas on both. Claude is still wired in as the per-call fallback.
+
+- Speed. Nemotron on Token Factory was the big win. Live cues on Nemotron 3 Ultra with thinking off take about 1.0 s median (1.4 s max), and simple extraction on Lightning takes 0.5–0.8 s. Research got the biggest jump: Claude with its built-in web search took 15–25 s per run; Tavily plus Nemotron Super takes about 3.5–11 s. Part of that comes from switching the search to Tavily and running searches in parallel, but it's what made research usable mid-conversation. Look mode's price check went from about 4–5 s on the Claude fallback to about 1–3 s.
+
+- Accuracy. Comparing Nemotron models with each other mattered more than I expected. The smallest, fastest model (Lightning) got 0 of 19 offer amounts right on my test negotiation because it converted cents twice; Ultra got 18 of 19. Picking the right size per call, plus short prompt notes and two code guards, matched what I needed from the Claude setup without fine-tuning.
+
+- Trade-offs. Out of the box, Nemotron needed more explicit instructions than Claude for the money scale and the status-colour rule, and occasionally leaked its reasoning block into the output, which I strip before parsing. Thinking mode is slow (~5.5 s for the agreement), so I only use it there.
+
+- Cost and control. Token Factory's OpenAI-compatible API made switching easy: one plain fetch client, per-call model choice through environment variables, and a /health endpoint that shows which model handles each call.
+
+Overall, Nemotron let me run every AI call in DEAL on open models while making the live experience faster than my original setup.
+```
+
 ---
 
 ## Extra answers, in case the form asks
