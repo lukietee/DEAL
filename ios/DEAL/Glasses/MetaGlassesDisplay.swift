@@ -65,6 +65,7 @@ final class MetaGlassesDisplay: GlassesDisplay {
     private(set) var currentLook: LookHighlight?
     /// Research strip covering the cue (Look still wins over it).
     private(set) var currentResearch: GlassesResearch?
+    private(set) var currentMarket: GlassesMarket?
     private(set) var deviceName: String?
     private(set) var lastError: String?
     private(set) var registrationDescription = "Not configured"
@@ -221,6 +222,14 @@ final class MetaGlassesDisplay: GlassesDisplay {
     func showResearch(_ research: GlassesResearch?) {
         guard research != currentResearch else { return }
         currentResearch = research
+        cueRevision += 1
+        scheduleSend()
+    }
+
+    func showMarket(_ market: GlassesMarket?) {
+        guard market != currentMarket else { return }
+        currentMarket = market
+        guard currentCue != nil else { return }   // only shown under a cue
         cueRevision += 1
         scheduleSend()
     }
@@ -525,18 +534,19 @@ final class MetaGlassesDisplay: GlassesDisplay {
             let look = currentLook
             let research = currentResearch
             lastSendAt = .now
+            let market = currentMarket
             do {
                 if let look {
-                    try await display.send(Self.lookLayout(for: look))
+                    try await display.send(Self.card(Self.lookCard(for: look)) ?? Self.lookLayout(for: look))
                     if isFreshScreen { baseIsStandby = cue == nil }
                 } else if let research {
-                    try await display.send(Self.researchLayout(for: research))
+                    try await display.send(Self.card(MetaGlassesCards.research(research)) ?? Self.researchLayout(for: research))
                     if isFreshScreen { baseIsStandby = cue == nil }   // like Look: standby comes back after
                 } else if let cue {
-                    try await display.send(Self.layout(for: cue))
+                    try await display.send(Self.card(MetaGlassesCards.cue(cue, market: market)) ?? Self.layout(for: cue))
                     baseIsStandby = false
                 } else if isFreshScreen || baseIsStandby {
-                    try await display.send(Self.standbyLayout())
+                    try await display.send(Self.card(MetaGlassesCards.standby()) ?? Self.standbyLayout())
                     baseIsStandby = true
                 } else {
                     try await display.clearDisplay()
@@ -555,6 +565,27 @@ final class MetaGlassesDisplay: GlassesDisplay {
     }
 
     // MARK: - Layout (one root FlexBox per send)
+
+    /// The demo video's card design, pre-rendered by `MetaGlassesCards` and sent as one image.
+    /// nil (render failed) falls back to the display's text layouts below.
+    static func card(_ image: UIImage?) -> FlexBox? {
+        guard let image else { return nil }
+        return FlexBox(direction: .column) {
+            Image(image: image, sizePreset: .fill)
+        }
+    }
+
+    static func lookCard(for look: LookHighlight) -> UIImage? {
+        let category = look.identification.category.flatMap { $0.isEmpty ? nil : $0 }
+        let sources = look.price.map { $0.sourceCount == 1 ? "1 source" : "\($0.sourceCount) sources" }
+        return MetaGlassesCards.look(
+            look,
+            name: look.price?.name ?? look.identification.name ?? "Item",
+            price: look.price.map(lookPriceRange) ?? "Checking prices…",
+            summary: look.price.flatMap { $0.summary.isEmpty ? nil : $0.summary },
+            meta: look.expanded ? [category, sources].compactMap { $0 } : [],
+            hint: look.expanded ? "Swipe for sources · hold capture to negotiate" : "Pinch for details · swipe back to dismiss")
+    }
 
     /// Status dot + status word, cue heading, optional detail, offer → target.
     /// The display only has primary/secondary text colors, so the status color is a small

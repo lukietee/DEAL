@@ -15,10 +15,13 @@ protocol GlassesDisplay: AnyObject {
     func clear()
     /// Show the research strip over the cue, or nil to go back to the cue.
     func showResearch(_ research: GlassesResearch?)
+    /// Show the MARKET fair-range card under the cue, or nil to drop it.
+    func showMarket(_ market: GlassesMarket?)
 }
 
 extension GlassesDisplay {
     func showResearch(_ research: GlassesResearch?) {}
+    func showMarket(_ market: GlassesMarket?) {}
 }
 
 /// Fallback: a full-screen teleprompter on the buyer's phone (`TeleprompterView`).
@@ -74,5 +77,9 @@ final class GlassesFanOut: GlassesDisplay {
 
     func showResearch(_ research: GlassesResearch?) {
         meta.showResearch(research)
+    }
+
+    func showMarket(_ market: GlassesMarket?) {
+        meta.showMarket(market)
     }
 }

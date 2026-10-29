@@ -85,6 +85,24 @@ struct GlassesCue: Equatable, Sendable {
     var isAlert: Bool = false
     /// Identity of what triggered the cue, so displays only update on change.
     var sourceID: String
+    /// Replaces "WARNING · ON YOUR GLASSES" on the glasses card (e.g. "CONDITION MISMATCH").
+    var label: String? = nil
+    /// Short lines shown above the cue on the glasses card ("Listing: …", "Seen: …").
+    var context: [String] = []
+}
+
+/// The glasses MARKET card under the cue: the fair range once the research agents finish.
+struct GlassesMarket: Equatable, Sendable {
+    let low: Int
+    let high: Int
+    let agentCount: Int
+
+    init?(_ research: ResearchState?) {
+        guard let research, !research.isRunning, let range = research.priceRange else { return nil }
+        low = range.low
+        high = range.high
+        agentCount = research.agents.filter { $0.status == "done" }.count
+    }
 }
 
 enum OfferProgressLabel: String, Sendable {
@@ -239,6 +257,11 @@ extension SessionState {
                               target: session.targetPrice, isAlert: true, sourceID: "pr_\(blocked.id)")
         }
         guard let e = latestCueEvent, let cue = e.cue else { return nil }
+        if e.kind == "condition_check", let found = session.conditionChecks.last?.discrepancies.first {
+            return GlassesCue(text: cue, status: e.statusColor, currentOffer: currentOffer,
+                              target: session.targetPrice, sourceID: e.id, label: "CONDITION MISMATCH",
+                              context: ["Listing: \(found.claim)", "Seen: \(found.observed)"])
+        }
         return GlassesCue(text: cue, detail: e.cueDetail, status: e.statusColor,
                           currentOffer: currentOffer, target: session.targetPrice, sourceID: e.id)
     }

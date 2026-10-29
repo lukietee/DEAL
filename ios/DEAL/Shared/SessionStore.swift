@@ -95,6 +95,7 @@ final class SessionStore {
         researchStripTask = nil
         if role == .buyer {
             glasses?.showResearch(nil)
+            glasses?.showMarket(nil)
             glasses?.clear()
         }
     }
@@ -122,6 +123,7 @@ final class SessionStore {
             }
             glasses.show(cue)
         }
+        glasses.showMarket(GlassesMarket(state.research))
         let strip = GlassesResearch(state.research)
         if let strip {
             // Hold the strip when research starts (or restarts) and each time an agent finishes.
